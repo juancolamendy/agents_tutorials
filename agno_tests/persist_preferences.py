@@ -2,8 +2,6 @@
 Persistent Session Agent with Agno and Google Gemini
 A personal assistant that remembers user preferences across conversations.
 """
-
-from datetime import datetime
 from typing import Dict, Any
 import os
 

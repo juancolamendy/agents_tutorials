@@ -2,15 +2,13 @@
 Persistent Session Agent with Agno and Google Gemini
 A personal assistant that remembers user preferences across conversations.
 """
-
-from datetime import datetime
 from typing import Dict, Any
 import os
 
 from agno.agent import Agent
 from agno.models.google import Gemini
 from agno.db.sqlite import SqliteDb
-from agno.memory import AgentMemory
+from agno.memory import MemoryManager
 
 from dotenv import load_dotenv
 
@@ -18,76 +16,24 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Constants
+AGENT_ID = "agent_12345"
 USER_ID = "user_12345"
-DB_FILE = "session_data.db"
+DB_FILE = "memory_data.db"
 
 # Verify API key is loaded
 if not os.getenv("GOOGLE_API_KEY"):
     raise ValueError("GOOGLE_API_KEY not found in environment variables")
 
+# Setup SQLite database
+db = SqliteDb(db_file=DB_FILE)
 
-# Custom functions to manage preferences in session state
-def get_user_preferences(session_state: Dict[str, Any]) -> str:
-    """Retrieve user preferences from the session state.
-    
-    Args:
-        session_state: Automatically injected by Agno
-        
-    Returns:
-        str: Formatted preference information
-    """
-    preferences = session_state.get("preferences", {})
-    
-    pref_list = [f"{k}: {v}" for k, v in preferences.items()]
-    return f"Current preferences:\n" + "\n".join(f"- {p}" for p in pref_list)
-
-
-def update_preference(
-    session_state: Dict[str, Any],
-    preference_key: str, 
-    preference_value: str
-) -> str:
-    """Update or add a user preference to the session state.
-    
-    Args:
-        session_state: Automatically injected by Agno
-        preference_key: The preference name (e.g., 'favorite_color', 'favorite_food')
-        preference_value: The new preference value
-        
-    Returns:
-        str: Operation status message
-    """
-    # Get current preferences or initialize empty dict
-    if "preferences" not in session_state:
-        session_state["preferences"] = {}
-    
-    # Update the specific preference
-    old_value = session_state["preferences"].get(preference_key, "not set")
-    session_state["preferences"][preference_key] = preference_value
-    
-    return (
-        f"✓ Updated {preference_key} from '{old_value}' to '{preference_value}'.\n\n"
-        f"All preferences: {session_state['preferences']}"
-    )
-
-
-def list_all_preferences(session_state: Dict[str, Any]) -> str:
-    """List all stored preferences.
-    
-    Args:
-        session_state: Automatically injected by Agno
-        
-    Returns:
-        str: Formatted list of all preferences
-    """
-    preferences = session_state.get("preferences", {})
-    
-    if not preferences:
-        return "No preferences stored yet."
-    
-    pref_list = "\n".join([f"  • {k}: {v}" for k, v in preferences.items()])
-    return f"Your stored preferences:\n{pref_list}"
-
+# Setup your Memory Manager, to adjust how memories are created
+memory_manager = MemoryManager(
+    db=db,
+    # Select the model used for memory creation and updates. If unset, the default model of the Agent is used.
+    model=Gemini(id="gemini-2.0-flash-exp"),
+    additional_instructions="Summarize any big/long/accumulated memory before storing it.",
+)
 
 # Initialize Agent with Gemini and persistent storage
 agent = Agent(
@@ -96,133 +42,42 @@ agent = Agent(
 
     # Instructions for the agent
     instructions=[
-        "You are a helpful personal assistant with access to user preferences and history.",
+        "You are a helpful personal assistant with access to user memories and history.",
         "",
         "IMPORTANT GUIDELINES:",
-        "- When a user asks about their preferences, use the get_user_preferences or list_all_preferences tool.",
-        "- When a user tells you about a new preference or wants to update one, use the update_preference tool.",
-        "- Provide personalized responses based on stored preferences.",
+        "- Provide personalized responses based on stored memories.",
         "- Be conversational and friendly.",
-        "- If asked about something not in preferences, politely say you don't have that information stored.",
         "",
-        "TOOL USAGE:",
-        "- get_user_preferences: Shows all current preferences",
-        "- update_preference: Updates a single preference (takes preference_key and preference_value)",
-        "- list_all_preferences: Lists all preferences in a formatted way",
     ],
     
-    # Add tools for preference management
-    tools=[get_user_preferences, update_preference, list_all_preferences],
-
     # Add database for session persistence
     db=SqliteDb(db_file=DB_FILE),
-        
-    # Initialize session state with default preferences
-    session_state={
-        "preferences": {
-            "favorite_color": "blue",
-            "favorite_food": "pizza",
-            "preferred_language": "English"
-        }
-    },
-    
+
     # Add session history to context
     add_history_to_context=True,
     num_history_runs=5,  # Include last 5 conversation turns
-    # Add session state to context (available in instructions)
-    add_session_state_to_context=True,
         
+    # Add memory system
+    memory_manager=memory_manager,
+    enable_user_memories=True,  # Automatically extract and store user insights    
+    add_memories_to_context=True,
+
     # Enable markdown formatting
     markdown=True,
-    
-    # Show tool calls for transparency (set to False in production)
-    show_tool_calls=True,
 )
 
 
-# Optional: Agent with automatic memory extraction
-# This version automatically learns about users from conversations
-def create_agent_with_memory():
-    """Create an agent with automatic user memory extraction."""
-    
-    # Initialize memory system
-    memory = Memory(
-        model=Gemini(id="gemini-2.0-flash-exp"),
-        db=SqliteMemoryDb(table_name="user_memories", db_file=DB_FILE)
-    )
-    
-    agent_with_memory = Agent(
-        # model
-        model=Gemini(id="gemini-2.0-flash-exp"),
-
-        # Instructions for the agent
-        instructions=[
-            "You are a helpful personal assistant with access to user preferences and history.",
-            "",
-            "IMPORTANT GUIDELINES:",
-            "- When a user asks about their preferences, use the get_user_preferences or list_all_preferences tool.",
-            "- When a user tells you about a new preference or wants to update one, use the update_preference tool.",
-            "- Provide personalized responses based on stored preferences.",
-            "- Be conversational and friendly.",
-            "- If asked about something not in preferences, politely say you don't have that information stored.",
-            "",
-            "TOOL USAGE:",
-            "- get_user_preferences: Shows all current preferences",
-            "- update_preference: Updates a single preference (takes preference_key and preference_value)",
-            "- list_all_preferences: Lists all preferences in a formatted way",
-        ],        
-
-        # Add tools
-        tools=[get_user_preferences, update_preference, list_all_preferences],
-
-        # session persistent
-        db=SqliteDb(db_file=DB_FILE),
-
-        # Initialize session state
-        session_state={
-            "preferences": {
-                "favorite_color": "blue",
-                "favorite_food": "pizza"
-            }
-        },
-
-        # Session data and context settings
-        add_history_to_context=True,
-        num_history_runs=5,
-        add_session_state_to_context=True,
-        
-        # Add memory system
-        memory=memory,
-        enable_user_memories=True,  # Automatically extract and store user insights
-           
-        markdown=True,
-        show_tool_calls=False,  # Hide tool calls for cleaner output with memory
-    )
-    
-    return agent_with_memory
-
-
-def display_session_info(agent: Agent, user_id: str, session_id: str):
-    """Display current session information."""
-    print("\n" + "=" * 80)
-    print("SESSION INFORMATION")
-    print("=" * 80)
-    print(f"User ID: {user_id}")
-    print(f"Session ID: {session_id}")
-    print(f"Database: {DB_FILE}")
-    
-    # Get current session state
-    session_state = agent.get_session_state()
-    if session_state and "preferences" in session_state:
-        print(f"Current Preferences: {session_state['preferences']}")
-    print("=" * 80 + "\n")
+def display_user_memories(agent: Agent, user_id: str):
+    """Display user memories."""
+    memories = agent.get_user_memories(user_id=user_id)
+    if memories:
+        print("\n📝 Learned Memories:")
+        for mem in memories:
+            print(f"  • {mem.memory}")
 
 
 def main():
     """Main loop using agent with automatic memory."""
-    
-    # Create agent with memory
-    agent_mem = create_agent_with_memory()
     
     print("\n" + "=" * 80)
     print("AGNO + GEMINI: Assistant with Automatic Memory")
@@ -230,8 +85,6 @@ def main():
     print("This agent automatically learns from conversation!")
     print("Type 'exit' or 'quit' to end")
     print("=" * 80 + "\n")
-    
-    session_id = "memory_session"
     
     while True:
         user_input = input("You: ")
@@ -243,28 +96,27 @@ def main():
                 print("Session saved. Have a great day!")
                 
                 # Display final preferences
-                display_session_info(agent, USER_ID, session_id)
+                display_user_memories(agent, USER_ID)
                 print("=" * 80 + "\n")
 
-                memories = agent_mem.get_user_memories(user_id=USER_ID)
-                if memories:
-                    print("\n📝 Learned Memories:")
-                    for mem in memories:
-                        print(f"  • {mem.memory}")
             except:
                 pass
             print("\nGoodbye!\n")
             break
         
+        if user_input.lower() == "info":
+            display_user_memories(agent, USER_ID)
+            continue
+
         if not user_input.strip():
             continue
         
         print()
-        agent_mem.print_response(
+        agent.print_response(
             user_input,
             stream=True,
+            agent_id=AGENT_ID,
             user_id=USER_ID,
-            session_id=session_id
         )
         print()
 
