@@ -39,6 +39,7 @@ dependencies = [
     { name = "google-genai" },
     { name = "google-generativeai" },
     { name = "python-dotenv" },
+    { name = "rich" },
     { name = "sqlalchemy" },
 ]
 
@@ -48,6 +49,7 @@ requires-dist = [
     { name = "google-genai", specifier = ">=1.53.0" },
     { name = "google-generativeai", specifier = ">=0.8.5" },
     { name = "python-dotenv", specifier = ">=1.2.1" },
+    { name = "rich", specifier = ">=14.2.0" },
     { name = "sqlalchemy", specifier = ">=2.0.44" },
 ]
 

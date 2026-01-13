@@ -131,6 +131,8 @@ agent = Agent(
         
     # Enable markdown formatting
     markdown=True,
+    # Enable debug_mode
+    debug_mode=True,
 )
 
 def display_session_info(agent: Agent, user_id: str, session_id: str):
