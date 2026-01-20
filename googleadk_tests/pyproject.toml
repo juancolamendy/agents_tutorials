@@ -9,4 +9,6 @@ dependencies = [
     "google-genai>=1.59.0",
     "python-dotenv>=1.1.1",
     "rich>=14.2.0",
+    "aiosqlite>=0.20.0",
+    "greenlet>=3.0.0",
 ]
