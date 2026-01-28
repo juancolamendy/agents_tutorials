@@ -117,7 +117,7 @@ async def main():
     # Create agent with debug callback
     agent = Agent(
         name="debug_agent",
-        model="gemini-2.0-flash-exp",
+        model="gemini-3-flash-preview",
         instruction="You are a helpful assistant. Use the information provided above to answer questions.",
         before_model_callback=debug_and_inject_context,
     )

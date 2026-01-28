@@ -79,7 +79,7 @@ def create_agent(app_name: str) -> Agent:
     """Create and configure the agent with tools and instructions."""
     agent = Agent(
         name=app_name,
-        model="gemini-2.0-flash-exp",
+        model="gemini-3-flash-preview",
         instruction="""
         You are a helpful personal assistant with access to user preferences and state information.
         

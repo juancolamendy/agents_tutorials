@@ -158,7 +158,7 @@ state_tools = [
 # Personal assistant with state awareness
 root_agent = Agent(
     name="personal_assistant",
-    model="gemini-2.0-flash-exp",
+    model="gemini-3-flash-preview",
     instruction="""
     You are a highly personalized assistant that remembers user preferences and context.
     

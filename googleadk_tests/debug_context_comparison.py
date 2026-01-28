@@ -97,7 +97,7 @@ async def main():
     # ===== TEST 1: DEFAULT MODE (with history) =====
     agent_default = Agent(
         name="with_history",
-        model="gemini-2.0-flash-exp",
+        model="gemini-3-flash-preview",
         instruction="You are a helpful assistant.",
         include_contents='default',  # Default: includes history
         before_model_callback=create_debug_callback("TEST 1: WITH HISTORY (default)")
@@ -130,7 +130,7 @@ async def main():
     # ===== TEST 2: STATELESS MODE (no history) =====
     agent_stateless = Agent(
         name="stateless",
-        model="gemini-2.0-flash-exp",
+        model="gemini-3-flash-preview",
         instruction="You are a helpful assistant.",
         include_contents='none',  # Stateless: no history
         before_model_callback=create_debug_callback("TEST 2: STATELESS (no history)")
@@ -227,7 +227,7 @@ async def demo_state_injection():
 
     agent_hybrid = Agent(
         name="stateless_with_state",
-        model="gemini-2.0-flash-exp",
+        model="gemini-3-flash-preview",
         instruction="You are a helpful assistant. Use the user context above.",
         include_contents='none',  # Stateless
         before_model_callback=inject_state_callback

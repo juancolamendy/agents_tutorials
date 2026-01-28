@@ -17,7 +17,7 @@ DB_FILE = "simple_context_nohist_data.db"
 # Functions
 def create_agent():
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-exp"),
+        model=Gemini(id="gemini-3-flash-preview"),
         # system prompt
         # role / instructions / output
         description="You are a helpful AI assistant",

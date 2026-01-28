@@ -89,7 +89,7 @@ def list_all_preferences(session_state: Dict[str, Any]) -> str:
 # Initialize Agent with Gemini and persistent storage
 agent = Agent(
     # Use Google Gemini model
-    model=Gemini(id="gemini-2.0-flash-exp"),
+    model=Gemini(id="gemini-3-flash-preview"),
 
     # Instructions for the agent
     instructions=[

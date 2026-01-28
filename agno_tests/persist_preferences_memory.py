@@ -31,14 +31,14 @@ db = SqliteDb(db_file=DB_FILE)
 memory_manager = MemoryManager(
     db=db,
     # Select the model used for memory creation and updates. If unset, the default model of the Agent is used.
-    model=Gemini(id="gemini-2.0-flash-exp"),
+    model=Gemini(id="gemini-3-flash-preview"),
     additional_instructions="Summarize any big/long/accumulated memory before storing it.",
 )
 
 # Initialize Agent with Gemini and persistent storage
 agent = Agent(
     # Use Google Gemini model
-    model=Gemini(id="gemini-2.0-flash-exp"),
+    model=Gemini(id="gemini-3-flash-preview"),
 
     # Instructions for the agent
     instructions=[

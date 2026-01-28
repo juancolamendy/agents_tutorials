@@ -75,7 +75,7 @@ def add(x: float, y: float) -> str:
 
 def create_agent():
     compression_manager = CompressionManager(
-        model=Gemini(id="gemini-2.0-flash-exp"),
+        model=Gemini(id="gemini-3-flash-preview"),
         # config tool compression
         compress_tool_results=True,
         compress_tool_results_limit=3,  # Compress after 3 tool calls
@@ -88,7 +88,7 @@ def create_agent():
     
     # Use a cheaper model for summarization
     summary_manager = SessionSummaryManager(
-        model=Gemini(id="gemini-2.0-flash-exp"),
+        model=Gemini(id="gemini-3-flash-preview"),
 
         # Custom summarization prompt
         session_summary_prompt="""
@@ -105,7 +105,7 @@ def create_agent():
     )
 
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-exp"),
+        model=Gemini(id="gemini-3-flash-preview"),
         # system prompt
         # role / instructions / output
         description="You are a helpful AI assistant",

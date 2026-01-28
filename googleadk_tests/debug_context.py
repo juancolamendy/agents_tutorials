@@ -224,7 +224,7 @@ def create_agent():
 
     agent = Agent(
         name="context_debug_agent",
-        model="gemini-2.0-flash-exp",
+        model="gemini-3-flash-preview",
 
         # System instruction (role/instructions)
         instruction="""You are a helpful AI assistant with access to user preferences.

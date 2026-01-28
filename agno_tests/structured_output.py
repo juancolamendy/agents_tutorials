@@ -17,7 +17,7 @@ class MovieRecommendation(BaseModel):
 # Functions
 def create_agent():
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-exp"),
+        model=Gemini(id="gemini-3-flash-preview"),
         description="You are a helpful movie recommendation assistant",
         instructions=["Always be enthusiastic about movies", "Consider user preferences"],
         output_schema=MovieRecommendation,
