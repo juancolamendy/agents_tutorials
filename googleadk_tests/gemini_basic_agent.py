@@ -165,9 +165,10 @@ def run_agent(user_input, max_turns=10):
                     if hasattr(part, 'function_call') and part.function_call:
                         function_call = part.function_call
                         tool_name = function_call.name
+                        tool_id = function_call.id
                         tool_input = dict(function_call.args)
 
-                        print(f"Using tool {tool_name} with input {tool_input}")
+                        print(f"Using tool {tool_name} (id: {tool_id}) with input {tool_input}")
 
                         # Execute the tool
                         tool = agent.tool_map[tool_name]
@@ -175,10 +176,11 @@ def run_agent(user_input, max_turns=10):
 
                         print(f"Tool result: {tool_result}")
 
-                        # Create function response
+                        # Create function response with matching ID
                         function_responses.append(
                             types.Part(
                                 function_response=types.FunctionResponse(
+                                    id=tool_id,
                                     name=tool_name,
                                     response=tool_result
                                 )
