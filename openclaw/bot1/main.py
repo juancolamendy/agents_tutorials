@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import re
 import subprocess
 
 import anthropic
@@ -21,6 +22,37 @@ SOUL = load_soul()
 
 SESSIONS_DIR = "./sessions"
 os.makedirs(SESSIONS_DIR, exist_ok=True)
+
+SAFE_COMMANDS = {"ls", "cat", "head", "tail", "wc", "date", "whoami", "echo"}
+DANGEROUS_PATTERNS = [r"\brm\b", r"\bsudo\b", r"\bchmod\b", r"\bcurl.*\|.*sh"]
+APPROVALS_FILE = "./exec-approvals.json"
+
+def load_approvals():
+    if os.path.exists(APPROVALS_FILE):
+        with open(APPROVALS_FILE) as f:
+            return json.load(f)
+    return {"allowed": [], "denied": []}
+
+def save_approval(command, approved):
+    approvals = load_approvals()
+    key = "allowed" if approved else "denied"
+    if command not in approvals[key]:
+        approvals[key].append(command)
+    with open(APPROVALS_FILE, "w") as f:
+        json.dump(approvals, f, indent=2)
+
+def check_command_safety(command):
+    """Returns 'safe', 'approved', or 'needs_approval'."""
+    base_cmd = command.strip().split()[0] if command.strip() else ""
+    if base_cmd in SAFE_COMMANDS:
+        return "safe"
+    approvals = load_approvals()
+    if command in approvals["allowed"]:
+        return "approved"
+    for pattern in DANGEROUS_PATTERNS:
+        if re.search(pattern, command):
+            return "needs_approval"
+    return "needs_approval"
 
 TOOLS = [
     {
@@ -72,8 +104,19 @@ TOOLS = [
 
 def execute_tool(name, input):
     if name == "run_command":
+        command = input["command"]
+        safety = check_command_safety(command)
+
+        if safety == "needs_approval":
+            print(f"  [approval needed] {command}")
+            answer = input(f"  Allow this command? (y/n): ").strip().lower()
+            approved = answer == "y"
+            save_approval(command, approved)
+            if not approved:
+                return "Command denied by user."
+
         result = subprocess.run(
-            input["command"], shell=True,
+            command, shell=True,
             capture_output=True, text=True, timeout=30
         )
         return result.stdout + result.stderr
