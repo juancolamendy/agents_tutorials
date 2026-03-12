@@ -283,17 +283,57 @@ writer_agent = Agent(
 )
 
 # ============================================================
+# 4. AGENT REGISTRY
+# ============================================================
+
+class AgentRegistry:
+    """Maps agent names to Agent instances and their descriptions."""
+
+    def __init__(self):
+        self._agents: Dict[str, Agent] = {}
+        self._descriptions: Dict[str, str] = {}
+
+    def register(self, agent: Agent, description: str) -> None:
+        self._agents[agent.name.lower()] = agent
+        self._descriptions[agent.name] = description
+
+    def get(self, name: str) -> Optional[Agent]:
+        return self._agents.get(name.lower().strip())
+
+    def names(self) -> List[str]:
+        return list(self._descriptions.keys())
+
+    def agent_list_for_prompt(self) -> str:
+        return "\n".join(
+            f"- {name}: {desc}" for name, desc in self._descriptions.items()
+        )
+
+
+agent_registry = AgentRegistry()
+agent_registry.register(
+    librarian_agent,
+    "Fetches style blueprints via semantic search; writes semantic_blueprint to session_state.",
+)
+agent_registry.register(
+    researcher_agent,
+    "Fetches factual context via semantic search; writes research_results to session_state.",
+)
+agent_registry.register(
+    writer_agent,
+    "Generates final content; reads semantic_blueprint and research_results from session_state via its own tool.",
+)
+
+# ============================================================
 # 5. EXECUTOR TOOLS – CALL SUBAGENTS (GENERIC)
 # ============================================================
 
 class SubagentRouterTools(Toolkit):
-    """
-    Generic router tool so the Executor can call subagents by name.
-    """
+    """Generic router tool so the Executor can call subagents by name."""
     name = "subagent_router_tools"
 
-    def __init__(self):
+    def __init__(self, registry: AgentRegistry):
         super().__init__(name=self.name)
+        self._registry = registry
         self.register(self.call_subagent)
 
     def call_subagent(self,
@@ -301,54 +341,52 @@ class SubagentRouterTools(Toolkit):
                       agent_name: str,
                       input_text: str) -> str:
         """
-        Dynamically call a subagent by name.
-        IMPORTANT: agent_name must be exactly one of: 'Librarian', 'Researcher', 'Writer'.
-        Use the agent name exactly as specified in the plan step's 'agent' field.
+        Call a registered subagent by name.
+        agent_name must exactly match a name in the agent registry
+        (case-insensitive): use the value from the plan step's 'agent' field.
         """
-        name_lower = agent_name.lower().strip()
-        if "librarian" in name_lower:
-            agent = librarian_agent
-        elif "researcher" in name_lower or "research" in name_lower:
-            agent = researcher_agent
-        elif ("writer" in name_lower or "solution" in name_lower
-              or "executor" in name_lower or "summary" in name_lower
-              or "analyst" in name_lower or "compose" in name_lower
-              or "content" in name_lower or "author" in name_lower):
-            agent = writer_agent
-        else:
-            # last resort: default to Writer for final content generation
-            agent = writer_agent
-
+        agent = self._registry.get(agent_name)
+        if agent is None:
+            available = self._registry.names()
+            return f"Error: unknown agent '{agent_name}'. Available agents: {available}"
         resp = agent.run(input_text, session_state=run_context.session_state)
         return resp.content
 
-subagent_router_tools = SubagentRouterTools()
+subagent_router_tools = SubagentRouterTools(agent_registry)
 
 # ============================================================
 # 6. PLANNER AGENT (OPTIONAL – CAN BE BYPASSED)
 # ============================================================
 
+def _build_planner_instructions(registry: AgentRegistry) -> str:
+    agent_lines = registry.agent_list_for_prompt()
+    names_example = registry.names()
+    steps_example = "\n".join(
+        f'    {{"id": "step{i+1}", "agent": "{name}", "input_template": "..."}}'
+        for i, name in enumerate(names_example)
+    )
+    return (
+        "You create a JSON execution plan for the Context Engine.\n"
+        "Input: user_goal and optional style_hint.\n\n"
+        "Available agents:\n"
+        f"{agent_lines}\n\n"
+        "Each agent reads its own dependencies from session_state via its own tools.\n"
+        "For the final content agent, input_template should only state the goal.\n\n"
+        "Output schema (use the exact agent names listed above):\n"
+        "{\n"
+        "  \"steps\": [\n"
+        f"{steps_example}\n"
+        "  ]\n"
+        "}\n"
+        "Return ONLY JSON."
+    )
+
+
 planner_agent = Agent(
     name="Planner",
     role="Planner",
     model=model,
-    instructions=(
-        "You create a JSON execution plan for the Context Engine.\n"
-        "Input: user_goal and optional style_hint.\n"
-        "Output schema:\n"
-        "{\n"
-        "  \"steps\": [\n"
-        "    {\"id\": \"step1\", \"agent\": \"Librarian\", \"input_template\": \"...\"},\n"
-        "    {\"id\": \"step2\", \"agent\": \"Researcher\", \"input_template\": \"...\"},\n"
-        "    {\"id\": \"step3\", \"agent\": \"Writer\", \"input_template\": \"...\"}\n"
-        "  ]\n"
-        "}\n"
-        "The Librarian writes semantic_blueprint to session_state automatically.\n"
-        "The Researcher writes research_results to session_state automatically.\n"
-        "The Writer reads both via its own tool — do NOT use {{step_id}} placeholders.\n"
-        "For the Writer step, input_template should only state the goal to write about.\n"
-        "Return ONLY JSON."
-    ),
+    instructions=_build_planner_instructions(agent_registry),
     markdown=False,
 )
 

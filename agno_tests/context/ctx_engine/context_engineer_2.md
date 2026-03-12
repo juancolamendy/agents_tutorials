@@ -2,7 +2,7 @@
 
 ## Overview
 
-Generic Context-Aware Multi-Agent System built with [Agno](https://github.com/agno-agi/agno) and LanceDB. Implements a two-step workflow where a **Planner** agent produces a JSON execution plan and an **Executor** agent runs it by dispatching specialized subagents.
+Generic Context-Aware Multi-Agent System built with [Agno](https://github.com/agno-agi/agno) and LanceDB. Implements a two-step workflow where a **Planner** agent produces a JSON execution plan and an **Executor** agent runs it by dispatching specialist subagents looked up from a central **AgentRegistry**.
 
 ---
 
@@ -18,17 +18,22 @@ run_context_engine(goal, style_hint)
 │  Step 2: Executor Step              │
 └─────────────────────────────────────┘
         │
-        ▼ session_state["plan"]
+        ▼ plan JSON embedded in prompt
 ┌─────────────────────────────────────┐
 │         Executor Agent              │
-│  Tools: DependencyTools             │
-│         SubagentRouterTools         │
+│  Tools: SubagentRouterTools         │
+│         (registry-backed lookup)    │
 └─────────────────────────────────────┘
         │
         ├──► Librarian Agent  (LibrarianTools)
+        │       └─ writes semantic_blueprint → session_state
         ├──► Researcher Agent (ResearcherTools)
-        └──► Writer Agent
+        │       └─ writes research_results → session_state
+        └──► Writer Agent     (WriterContextTools)
+                └─ reads semantic_blueprint + research_results from session_state
 ```
+
+**Key design principle:** each subagent is self-contained — it reads its own dependencies from `session_state` via its own tool. No placeholder substitution (`{{step_id}}`) is needed; the Executor LLM never resolves templates itself.
 
 ---
 
@@ -105,52 +110,75 @@ Registered tool: **`semantic_research(query, limit=5)`**
 - Writes result list into `session_state["research_results"]`.
 - Returns JSON string of `[{id, text}, ...]`.
 
+#### `WriterContextTools` (Toolkit)
+
+Registered tool: **`get_writing_context()`**
+- Reads `session_state["semantic_blueprint"]` and `session_state["research_results"]` (written by the Librarian and Researcher).
+- Returns both as a single JSON object: `{"semantic_blueprint": {...}, "research_results": [...]}`.
+- The Writer calls this before generating content, so it receives fully populated context from prior steps.
+
 ---
 
 ### 3. Subagents
 
 All agents use `Claude(id="claude-sonnet-4-20250514")`.
 
-| Agent | Role | Tools | Behavior |
-|---|---|---|---|
-| `librarian_agent` | Context Librarian | `LibrarianTools` | Calls `semantic_blueprint_search` and returns the JSON blueprint |
-| `researcher_agent` | Knowledge Researcher | `ResearcherTools` | Calls `semantic_research` and summarizes findings |
-| `writer_agent` | Writer | None | Reads `semantic_blueprint` and `research_results` from session_state; generates final content following the blueprint |
-
-**`subagents_team`** — An Agno `Team` grouping all three subagents (used as a logical grouping; dispatching is done via `SubagentRouterTools`).
+| Agent | Role | Tools | session_state writes | Behavior |
+|---|---|---|---|---|
+| `librarian_agent` | Context Librarian | `LibrarianTools` | `semantic_blueprint`, `blueprint_found` | Calls `semantic_blueprint_search`; returns the matched blueprint |
+| `researcher_agent` | Knowledge Researcher | `ResearcherTools` | `research_results` | Calls `semantic_research`; summarizes findings |
+| `writer_agent` | Writer | `WriterContextTools` | — | Calls `get_writing_context()` to load context from session_state; generates final content following the blueprint |
 
 ---
 
-### 4. DependencyTools (Toolkit)
+### 4. Agent Registry
 
-Registered tool: **`resolve_template(template)`**
-- Reads `session_state["step_outputs"]` (a `Dict[str, str]`).
-- Replaces `{{step_id}}` placeholders in `template` with the corresponding step output.
-- Returns the fully resolved string.
+**`AgentRegistry`** — central registry mapping agent names to `Agent` instances and their descriptions.
+
+```python
+agent_registry = AgentRegistry()
+agent_registry.register(librarian_agent, "...")
+agent_registry.register(researcher_agent, "...")
+agent_registry.register(writer_agent, "...")
+```
+
+**Methods:**
+
+| Method | Description |
+|---|---|
+| `register(agent, description)` | Registers an agent by its `agent.name` (stored lowercase for lookup) |
+| `get(name) → Agent \| None` | Case-insensitive exact lookup by name |
+| `names() → List[str]` | Returns all registered agent names (display-cased) |
+| `agent_list_for_prompt() → str` | Returns a formatted bullet list of `name: description` for use in system prompts |
+
+**Extending the system:** registering a new specialist agent is a single `agent_registry.register(...)` call. The Planner's instructions and the router's dispatch table update automatically.
 
 ---
 
 ### 5. SubagentRouterTools (Toolkit)
 
+**`SubagentRouterTools(registry)`** — takes an `AgentRegistry` at construction time.
+
 Registered tool: **`call_subagent(agent_name, input_text)`**
-- Dispatches to one of the three subagents based on fuzzy name matching (case-insensitive substring match).
-- Falls back to `writer_agent` for any unrecognized name.
-- Passes `session_state` into the subagent call so state is shared.
+- Looks up `agent_name` in the registry with `registry.get(agent_name)` (case-insensitive).
+- Returns a clear error string if the name is not found (no silent fallbacks).
+- Passes `session_state` into the subagent call so state is shared across agents.
 - Returns the subagent's response content as a string.
 
-**Name matching rules:**
-
-| Match keyword(s) | Routed to |
-|---|---|
-| `librarian` | `librarian_agent` |
-| `researcher`, `research` | `researcher_agent` |
-| `writer`, `solution`, `executor`, `summary`, `analyst`, `compose`, `content`, `author`, or unrecognized | `writer_agent` |
+```python
+subagent_router_tools = SubagentRouterTools(agent_registry)
+```
 
 ---
 
 ### 6. Planner Agent + Step
 
-**`planner_agent`** — An Agno `Agent` that returns a JSON execution plan.
+**`_build_planner_instructions(registry)`** — generates the planner's system prompt dynamically from the registry:
+- Lists all registered agents with their descriptions.
+- Builds the output schema example using actual registered agent names.
+- Instructs the planner not to use `{{step_id}}` placeholders (each agent reads its own context from `session_state`).
+
+**`planner_agent`** — an Agno `Agent` whose instructions are generated by `_build_planner_instructions(agent_registry)`.
 
 **Output schema:**
 ```json
@@ -158,13 +186,13 @@ Registered tool: **`call_subagent(agent_name, input_text)`**
   "steps": [
     {"id": "step_librarian", "agent": "Librarian", "input_template": "..."},
     {"id": "step_researcher", "agent": "Researcher", "input_template": "..."},
-    {"id": "step_writer",    "agent": "Writer",     "input_template": "..."}
+    {"id": "step_writer",    "agent": "Writer",     "input_template": "<goal only>"}
   ]
 }
 ```
 
-- Later steps may reference earlier step outputs via `{{step_id}}` placeholders in `input_template`.
-- The planner is instructed to return **only JSON** (no prose).
+- The Planner is instructed to return **only JSON** (no prose).
+- The Writer's `input_template` states only the goal — it fetches its own context via `get_writing_context()`.
 
 **`planner_step_fn(step_input, run_context)`**
 1. Reads `user_goal` and `style_hint` from `session_state`.
@@ -177,21 +205,23 @@ Registered tool: **`call_subagent(agent_name, input_text)`**
 
 ### 7. Executor Agent + Step
 
-**`executor_agent`** — An Agno `Agent` equipped with `DependencyTools` and `SubagentRouterTools`.
+**`executor_agent`** — an Agno `Agent` equipped only with `SubagentRouterTools`.
+
+The plan JSON is passed **directly in the prompt message** (not referenced from `session_state`), so the LLM can read it without any special session_state injection.
 
 **Execution algorithm (defined in system instructions):**
 1. Initialize `step_outputs = {}` in `session_state`.
-2. For each step in `plan.steps`:
-   - a) Call `resolve_template(template)` to substitute `{{step_id}}` placeholders.
-   - b) Call `call_subagent(agent_name, resolved_input)`.
-   - c) Store result in `step_outputs[step.id]` and update `session_state["step_outputs"]`.
-   - d) Append a trace entry to `session_state["trace_logs"]`.
+2. For each step in `plan.steps` (in order):
+   - a) Call `call_subagent(agent_name, input_text)` — the subagent reads its own dependencies from `session_state` via its tools.
+   - b) Store result in `step_outputs[step.id]` and update `session_state["step_outputs"]`.
+   - c) Append a trace entry to `session_state["trace_logs"]`.
 3. Write `step_outputs[last_step_id]` into `session_state["final_output"]` and return it.
 
 **`executor_step_fn(step_input, run_context)`**
 1. Bootstraps `step_outputs = {}` and `trace_logs = []` in `session_state` (if not present).
-2. Calls `executor_agent.run(...)` with the shared `session_state`.
-3. Returns `session_state["final_output"]` (or falls back to `resp.content`).
+2. Reads the plan from `session_state["plan"]` and serializes it to JSON.
+3. Calls `executor_agent.run(f"Execute this plan...\n\n{plan_json}")` with the shared `session_state`.
+4. Returns `session_state["final_output"]` (or falls back to `resp.content`).
 
 ---
 
@@ -204,7 +234,7 @@ context_engine_workflow = Workflow(
     session_state={},
     db=SqliteDb(
         session_table="generic_context_engine_sessions",
-        db_file="tmp/generic_context_engine.db",
+        db_file="context_engine_2.db",
     ),
 )
 ```
@@ -247,8 +277,6 @@ def run_context_engine(
 
 ## Session State Schema
 
-The following keys are used across the workflow:
-
 | Key | Set by | Type | Description |
 |---|---|---|---|
 | `user_goal` | `run_context_engine` | `str` | User's original goal |
@@ -272,24 +300,41 @@ run_context_engine(goal, style_hint)
   ├─ session_state["style_hint"] = style_hint
   │
   ▼ Planner Step
-  planner_agent.run(prompt)
+  planner_agent.run(prompt)         ← instructions built from agent_registry
   ├─ session_state["plan"] = { steps: [...] }
   │
   ▼ Executor Step
-  executor_agent.run(...)
+  executor_agent.run(plan_json)     ← plan passed directly in message
   │
   ├─ Step: Librarian
+  │   SubagentRouterTools → registry.get("Librarian") → librarian_agent
   │   LibrarianTools.semantic_blueprint_search(intent_query)
   │   └─ session_state["semantic_blueprint"] = { tone, style, ... }
   │
   ├─ Step: Researcher
+  │   SubagentRouterTools → registry.get("Researcher") → researcher_agent
   │   ResearcherTools.semantic_research(query)
   │   └─ session_state["research_results"] = [{ id, text }, ...]
   │
   └─ Step: Writer
-      writer_agent.run(resolved_input, session_state)
+      SubagentRouterTools → registry.get("Writer") → writer_agent
+      WriterContextTools.get_writing_context()
+      └─ reads semantic_blueprint + research_results from session_state
       └─ session_state["final_output"] = <generated content>
 ```
+
+---
+
+## Adding a New Specialist Agent
+
+1. Create a `Toolkit` subclass with the agent's tool(s).
+2. Define the `Agent` instance.
+3. Register it:
+   ```python
+   agent_registry.register(my_agent, "Description of what it does and what it writes to session_state.")
+   ```
+
+The Planner's system prompt and `SubagentRouterTools` dispatch table update automatically — no other changes needed.
 
 ---
 
