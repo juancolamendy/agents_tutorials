@@ -9,6 +9,15 @@ load_dotenv()
 
 client = anthropic.Anthropic()
 
+def load_soul(path: str = "SOUL.md") -> str:
+    try:
+        with open(path, "r") as f:
+            return f.read()
+    except Exception:
+        return ""
+
+SOUL = load_soul()
+
 SESSIONS_DIR = "./sessions"
 os.makedirs(SESSIONS_DIR, exist_ok=True)
 
@@ -40,6 +49,7 @@ async def handle_message(user_id: str, session_id: str, text: str):
     response = client.messages.create(
         model="claude-sonnet-4-6",
         max_tokens=4096,
+        system=SOUL,
         messages=messages
     )
 
