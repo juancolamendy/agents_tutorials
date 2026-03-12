@@ -3,12 +3,15 @@ Generic Context-Aware Multi-Agent System (Agno + LanceDB)
 
 - Workflow:
     Step 1: PlannerAgent → writes JSON plan into session_state["plan"]
-    Step 2: ExecutorAgent → reads plan, calls subagents (Librarian, Researcher, Writer) via tools
+    Step 2: ExecutorAgent → reads plan (passed directly in message), calls subagents
 
 - Execution model:
     * Planner and Executor are *agents* used as workflow steps.
-    * Executor resolves dependencies through a generic "dependency resolver" tool
-      that reads step outputs from session_state instead of a hard-coded function.
+    * Each subagent reads its own dependencies from session_state via its own tools:
+      - Librarian writes semantic_blueprint → session_state
+      - Researcher writes research_results → session_state
+      - Writer calls get_writing_context() to read both from session_state
+    * No {{step_id}} placeholder substitution needed.
 """
 
 import os
@@ -219,6 +222,20 @@ class ResearcherTools(Toolkit):
             run_context.session_state["research_results"] = results
         return json.dumps(results)
 
+
+class WriterContextTools(Toolkit):
+    name = "writer_context_tools"
+
+    def __init__(self):
+        super().__init__(name=self.name)
+        self.register(self.get_writing_context)
+
+    def get_writing_context(self, run_context: RunContext) -> str:
+        """Read semantic_blueprint and research_results stored by prior agents."""
+        blueprint = run_context.session_state.get("semantic_blueprint", {}) if run_context.session_state else {}
+        research = run_context.session_state.get("research_results", []) if run_context.session_state else []
+        return json.dumps({"semantic_blueprint": blueprint, "research_results": research})
+
 # ============================================================
 # 3. SUBAGENTS (Librarian, Researcher, Writer)
 # ============================================================
@@ -255,55 +272,15 @@ writer_agent = Agent(
     name="Writer",
     role="Writer",
     model=model,
+    tools=[WriterContextTools()],
     instructions=(
         "You generate final content.\n"
-        "Use semantic_blueprint and research_results from session_state.\n"
+        "Always call get_writing_context() first to load the style blueprint and research facts.\n"
         "Follow blueprint.tone/style/structure/techniques exactly.\n"
         "Do not mention agents, tools, or the internal process."
     ),
     markdown=True,
 )
-
-# Optional: a team grouping the three subagents
-subagents_team = Team(
-    name="Context Subagents Team",
-    members=[librarian_agent, researcher_agent, writer_agent],
-    instructions="Team of specialized agents used by the Executor via tools.",
-)
-
-# ============================================================
-# 4. GENERIC DEPENDENCY RESOLVER TOOL (NO CUSTOM FUNCTION)
-# ============================================================
-
-class DependencyTools(Toolkit):
-    """
-    Generic dependency resolver exposed as a tool.
-    The Executor agent calls this tool to substitute any placeholders
-    using values stored in session_state['step_outputs'].
-    """
-    name = "dependency_tools"
-
-    def __init__(self):
-        super().__init__(name=self.name)
-        self.register(self.resolve_template)
-
-    def resolve_template(self,
-                         run_context: RunContext,
-                         template: str) -> str:
-        """
-        Read step_outputs from session_state and replace placeholders
-        of the form {{step_id}} in the template string.
-        (You can choose any marker; here we use {{step_id}} instead of $$.)
-        """
-        outputs: Dict[str, str] = run_context.session_state.get("step_outputs", {}) if run_context.session_state else {}
-        resolved = template
-        for sid, out in outputs.items():
-            ph = "{{" + sid + "}}"
-            if ph in resolved:
-                resolved = resolved.replace(ph, out)
-        return resolved
-
-dependency_tools = DependencyTools()
 
 # ============================================================
 # 5. EXECUTOR TOOLS – CALL SUBAGENTS (GENERIC)
@@ -357,7 +334,7 @@ planner_agent = Agent(
     model=model,
     instructions=(
         "You create a JSON execution plan for the Context Engine.\n"
-        "Input: user_goal and optional style_hint from session_state.\n"
+        "Input: user_goal and optional style_hint.\n"
         "Output schema:\n"
         "{\n"
         "  \"steps\": [\n"
@@ -366,8 +343,10 @@ planner_agent = Agent(
         "    {\"id\": \"step3\", \"agent\": \"Writer\", \"input_template\": \"...\"}\n"
         "  ]\n"
         "}\n"
-        "Use {{step_id}} placeholders in later input_template fields to refer to "
-        "previous step outputs.\n"
+        "The Librarian writes semantic_blueprint to session_state automatically.\n"
+        "The Researcher writes research_results to session_state automatically.\n"
+        "The Writer reads both via its own tool — do NOT use {{step_id}} placeholders.\n"
+        "For the Writer step, input_template should only state the goal to write about.\n"
         "Return ONLY JSON."
     ),
     markdown=False,
@@ -405,10 +384,7 @@ Create the JSON plan now.
                 {
                     "id": "step_writer",
                     "agent": "Writer",
-                    "input_template": (
-                        "Use the style from {{step_librarian}} and the facts from "
-                        "{{step_researcher}} to answer the goal: " + goal
-                    ),
+                    "input_template": f"Write content for goal: {goal}",
                 },
             ]
         }
@@ -425,53 +401,40 @@ executor_agent = Agent(
     name="Executor",
     role="Executor",
     model=model,
-    tools=[dependency_tools, subagent_router_tools],
+    tools=[subagent_router_tools],
     instructions=(
         "You are the Executor of a Context Engine.\n"
-        "You receive a JSON plan in session_state['plan'] with a list of steps.\n"
+        "You receive a JSON plan directly in the message with a list of steps.\n"
         "Each step contains: id, agent, input_template.\n\n"
         "Algorithm:\n"
-        "1) Initialize step_outputs = {} and write it into session_state.\n"
-        "2) For each step in plan.steps:\n"
-        "   a) Call dependency_tools.resolve_template(template=step.input_template)\n"
-        "      to substitute any {{step_id}} placeholders using step_outputs.\n"
-        "   b) Call subagent_router_tools.call_subagent(agent_name=step.agent,\n"
-        "      input_text=resolved_input) to execute the appropriate subagent.\n"
-        "   c) Store the returned text in step_outputs[step.id] and update\n"
+        "1) Initialize step_outputs = {} in session_state.\n"
+        "2) For each step in plan.steps (in order):\n"
+        "   a) Call subagent_router_tools.call_subagent(agent_name=step.agent,\n"
+        "      input_text=step.input_template) to execute the subagent.\n"
+        "      Each subagent reads its own dependencies from session_state via its tools.\n"
+        "   b) Store the returned text in step_outputs[step.id] and update\n"
         "      session_state['step_outputs'].\n"
-        "   d) Append a trace entry to session_state['trace_logs'].\n"
+        "   c) Append a trace entry to session_state['trace_logs'].\n"
         "3) After all steps, write step_outputs[last_step_id] into\n"
-        "   session_state['final_output'] and return it as your own message.\n\n"
+        "   session_state['final_output'] and return it.\n\n"
         "Execute the above algorithm carefully and deterministically."
     ),
     markdown=True,
 )
 
 def executor_step_fn(step_input, run_context: RunContext):
-    # bootstrap step_outputs / trace_logs
     if run_context.session_state is not None:
         run_context.session_state.setdefault("step_outputs", {})
         run_context.session_state.setdefault("trace_logs", [])
 
     plan = run_context.session_state.get("plan", {"steps": []})
-    steps: List[Dict[str, Any]] = plan.get("steps", [])
+    plan_json = json.dumps(plan, indent=2)
 
-    step_outputs: Dict[str, str] = run_context.session_state["step_outputs"]
-    trace_logs: List[Dict[str, Any]] = run_context.session_state["trace_logs"]
-
-    # Let the Executor agent drive the loop via its own reasoning, but we still
-    # call it once with an instruction to run the algorithm.
     resp = executor_agent.run(
-        "Execute the plan in session_state['plan'] step by step as described "
-        "in your system instructions, then return ONLY the final output.",
+        f"Execute this plan step by step as described in your system instructions:\n\n{plan_json}\n\nReturn ONLY the final output.",
         session_state=run_context.session_state,
     )
-
-    # After agent.run, session_state has been mutated by its tools;
-    # retrieve final state for workflow output.
-    final_output = run_context.session_state.get("final_output", resp.content)
-
-    return final_output
+    return run_context.session_state.get("final_output", resp.content)
 
 # ============================================================
 # 8. WORKFLOW WITH TWO STEPS
@@ -486,7 +449,7 @@ planner_step = Step(
 executor_step = Step(
     name="Executor Step",
     executor=executor_step_fn,  # function that calls Executor agent
-    description="Executor agent reads plan, calls subagents, resolves dependencies via tools.",
+    description="Executor agent receives plan in prompt and calls subagents; each subagent reads its own context from session_state.",
 )
 
 context_engine_workflow = Workflow(
