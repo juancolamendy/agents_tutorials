@@ -1,8 +1,10 @@
 import asyncio
+import inspect
 import json
 import os
 import re
 import subprocess
+from typing import get_type_hints
 
 import anthropic
 from dotenv import load_dotenv
@@ -57,135 +59,143 @@ def check_command_safety(command):
             return "needs_approval"
     return "needs_approval"
 
-TOOLS = [
-    {
-        "name": "run_command",
-        "description": "Run a shell command on the user's computer",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "command": {"type": "string", "description": "The command to run"}
-            },
-            "required": ["command"]
+# --- Tool registry ---
+
+_PYTHON_TO_JSON_TYPE = {
+    str: "string",
+    int: "integer",
+    float: "number",
+    bool: "boolean",
+}
+
+def _parse_param_docs(docstring: str) -> dict:
+    """Extract :param name: description entries from a docstring."""
+    params = {}
+    for match in re.finditer(r":param (\w+):\s*(.+)", docstring or ""):
+        params[match.group(1)] = match.group(2).strip()
+    return params
+
+def _infer_schema(fn) -> dict:
+    sig = inspect.signature(fn)
+    hints = get_type_hints(fn)
+    param_docs = _parse_param_docs(fn.__doc__)
+
+    properties = {}
+    required = []
+
+    for name, param in sig.parameters.items():
+        json_type = _PYTHON_TO_JSON_TYPE.get(hints.get(name), "string")
+        prop = {"type": json_type}
+        if name in param_docs:
+            prop["description"] = param_docs[name]
+        properties[name] = prop
+        if param.default is inspect.Parameter.empty:
+            required.append(name)
+
+    return {"type": "object", "properties": properties, "required": required}
+
+class ToolRegistry:
+    def __init__(self):
+        self._tools: dict = {}
+
+    def register(self, name: str, fn):
+        description = (fn.__doc__ or "").strip().splitlines()[0]
+        self._tools[name] = {
+            "fn": fn,
+            "schema": {
+                "name": name,
+                "description": description,
+                "input_schema": _infer_schema(fn),
+            }
         }
-    },
-    {
-        "name": "read_file",
-        "description": "Read a file from the filesystem",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "Path to the file"}
-            },
-            "required": ["path"]
-        }
-    },
-    {
-        "name": "write_file",
-        "description": "Write content to a file",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "Path to the file"},
-                "content": {"type": "string", "description": "Content to write"}
-            },
-            "required": ["path", "content"]
-        }
-    },
-    {
-        "name": "web_search",
-        "description": "Search the web for information",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "Search query"}
-            },
-            "required": ["query"]
-        }
-    },
-    {
-        "name": "save_memory",
-        "description": "Save important information to long-term memory. Use for user preferences, key facts, and anything worth remembering across sessions.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "key": {
-                    "type": "string",
-                    "description": "Short label, e.g. 'user-preferences', 'project-notes'"
-                },
-                "content": {
-                    "type": "string",
-                    "description": "The information to remember"
-                }
-            },
-            "required": ["key", "content"]
-        }
-    },
-    {
-        "name": "memory_search",
-        "description": "Search long-term memory for relevant information. Use at the start of conversations to recall context.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "What to search for"
-                }
-            },
-            "required": ["query"]
-        }
-    }
-]
+
+    def get_tool(self, name: str):
+        return self._tools.get(name)
+
+    def descriptions(self) -> list:
+        return [entry["schema"] for entry in self._tools.values()]
+
+# --- Tool functions ---
+
+def tool_run_command(command: str) -> str:
+    """Run a shell command on the user's computer.
+    :param command: The shell command to run.
+    """
+    safety = check_command_safety(command)
+
+    if safety == "needs_approval":
+        print(f"  [approval needed] {command}")
+        answer = input("  Allow this command? (y/n): ").strip().lower()
+        approved = answer == "y"
+        save_approval(command, approved)
+        if not approved:
+            return "Command denied by user."
+
+    result = subprocess.run(
+        command, shell=True,
+        capture_output=True, text=True, timeout=30
+    )
+    return result.stdout + result.stderr
+
+def tool_read_file(path: str) -> str:
+    """Read a file from the filesystem.
+    :param path: Path to the file.
+    """
+    with open(path, "r") as f:
+        return f.read()
+
+def tool_write_file(path: str, content: str) -> str:
+    """Write content to a file.
+    :param path: Path to the file.
+    :param content: Content to write.
+    """
+    with open(path, "w") as f:
+        f.write(content)
+    return f"Wrote to {path}"
+
+def tool_web_search(query: str) -> str:
+    """Search the web for information.
+    :param query: Search query.
+    """
+    return f"Search results for: {query}"
+
+def tool_save_memory(key: str, content: str) -> str:
+    """Save important information to long-term memory. Use for user preferences, key facts, and anything worth remembering across sessions.
+    :param key: Short label, e.g. 'user-preferences', 'project-notes'.
+    :param content: The information to remember.
+    """
+    filepath = os.path.join(MEMORY_DIR, f"{key}.md")
+    with open(filepath, "w") as f:
+        f.write(content)
+    return f"Saved to memory: {key}"
+
+def tool_memory_search(query: str) -> str:
+    """Search long-term memory for relevant information. Use at the start of conversations to recall context.
+    :param query: What to search for.
+    """
+    q = query.lower()
+    results = []
+    for fname in os.listdir(MEMORY_DIR):
+        if fname.endswith(".md"):
+            with open(os.path.join(MEMORY_DIR, fname), "r") as f:
+                content = f.read()
+            if any(word in content.lower() for word in q.split()):
+                results.append(f"--- {fname} ---\n{content}")
+    return "\n\n".join(results) if results else "No matching memories found."
+
+registry = ToolRegistry()
+registry.register("run_command", tool_run_command)
+registry.register("read_file", tool_read_file)
+registry.register("write_file", tool_write_file)
+registry.register("web_search", tool_web_search)
+registry.register("save_memory", tool_save_memory)
+registry.register("memory_search", tool_memory_search)
 
 def execute_tool(name, tool_input):
-    if name == "run_command":
-        command = tool_input["command"]
-        safety = check_command_safety(command)
-
-        if safety == "needs_approval":
-            print(f"  [approval needed] {command}")
-            answer = input("  Allow this command? (y/n): ").strip().lower()
-            approved = answer == "y"
-            save_approval(command, approved)
-            if not approved:
-                return "Command denied by user."
-
-        result = subprocess.run(
-            command, shell=True,
-            capture_output=True, text=True, timeout=30
-        )
-        return result.stdout + result.stderr
-
-    elif name == "read_file":
-        with open(tool_input["path"], "r") as f:
-            return f.read()
-
-    elif name == "write_file":
-        with open(tool_input["path"], "w") as f:
-            f.write(tool_input["content"])
-        return f"Wrote to {tool_input['path']}"
-
-    elif name == "web_search":
-        return f"Search results for: {tool_input['query']}"
-
-    elif name == "save_memory":
-        filepath = os.path.join(MEMORY_DIR, f"{tool_input['key']}.md")
-        with open(filepath, "w") as f:
-            f.write(tool_input["content"])
-        return f"Saved to memory: {tool_input['key']}"
-
-    elif name == "memory_search":
-        query = tool_input["query"].lower()
-        results = []
-        for fname in os.listdir(MEMORY_DIR):
-            if fname.endswith(".md"):
-                with open(os.path.join(MEMORY_DIR, fname), "r") as f:
-                    content = f.read()
-                if any(word in content.lower() for word in query.split()):
-                    results.append(f"--- {fname} ---\n{content}")
-        return "\n\n".join(results) if results else "No matching memories found."
-
-    return f"Unknown tool: {name}"
+    tool = registry.get_tool(name)
+    if tool is None:
+        return f"Unknown tool: {name}"
+    return tool["fn"](**tool_input)
 
 def estimate_tokens(messages):
     """Rough token estimate: ~4 chars per token."""
@@ -244,7 +254,7 @@ def run_agent_turn(messages):
             model="claude-sonnet-4-6",
             max_tokens=4096,
             system=SOUL,
-            tools=TOOLS,
+            tools=registry.descriptions(),
             messages=messages
         )
 
