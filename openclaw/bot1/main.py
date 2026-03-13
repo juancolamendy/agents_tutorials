@@ -102,14 +102,14 @@ TOOLS = [
     }
 ]
 
-def execute_tool(name, input):
+def execute_tool(name, tool_input):
     if name == "run_command":
-        command = input["command"]
+        command = tool_input["command"]
         safety = check_command_safety(command)
 
         if safety == "needs_approval":
             print(f"  [approval needed] {command}")
-            answer = input(f"  Allow this command? (y/n): ").strip().lower()
+            answer = input("  Allow this command? (y/n): ").strip().lower()
             approved = answer == "y"
             save_approval(command, approved)
             if not approved:
@@ -122,18 +122,55 @@ def execute_tool(name, input):
         return result.stdout + result.stderr
 
     elif name == "read_file":
-        with open(input["path"], "r") as f:
+        with open(tool_input["path"], "r") as f:
             return f.read()
 
     elif name == "write_file":
-        with open(input["path"], "w") as f:
-            f.write(input["content"])
-        return f"Wrote to {input['path']}"
+        with open(tool_input["path"], "w") as f:
+            f.write(tool_input["content"])
+        return f"Wrote to {tool_input['path']}"
 
     elif name == "web_search":
-        return f"Search results for: {input['query']}"
+        return f"Search results for: {tool_input['query']}"
 
     return f"Unknown tool: {name}"
+
+def estimate_tokens(messages):
+    """Rough token estimate: ~4 chars per token."""
+    return sum(len(json.dumps(m)) for m in messages) // 4
+
+def compact_session(user_id, session_id, messages):
+    """Summarize old messages when context gets too long."""
+    if estimate_tokens(messages) < 100_000:
+        return messages
+
+    split = len(messages) // 2
+    old, recent = messages[:split], messages[split:]
+
+    print("  [compacting session history...]")
+
+    summary = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=2000,
+        messages=[{
+            "role": "user",
+            "content": (
+                "Summarize this conversation concisely. Preserve:\n"
+                "- Key facts about the user (name, preferences)\n"
+                "- Important decisions made\n"
+                "- Open tasks or TODOs\n\n"
+                f"{json.dumps(old, indent=2)}"
+            )
+        }]
+    )
+
+    compacted = [{
+        "role": "user",
+        "content": f"[Previous conversation summary]\n{summary.content[0].text}"
+    }] + recent
+
+    save_session(user_id, session_id, compacted)
+    return compacted
 
 def serialize_content(content):
     serialized = []
@@ -203,6 +240,7 @@ def save_session(user_id, session_id, messages):
 
 async def handle_message(user_id: str, session_id: str, text: str):
     messages = load_session(user_id, session_id)
+    messages = compact_session(user_id, session_id, messages)
     messages.append({"role": "user", "content": text})
 
     response_text, messages = run_agent_turn(messages)
