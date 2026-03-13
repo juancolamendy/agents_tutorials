@@ -13,15 +13,6 @@ load_dotenv()
 
 client = anthropic.Anthropic()
 
-def load_soul(path: str = "workspace/SOUL.md") -> str:
-    try:
-        with open(path, "r") as f:
-            return f.read()
-    except Exception:
-        return ""
-
-SOUL = load_soul()
-
 SESSIONS_DIR = "./sessions"
 os.makedirs(SESSIONS_DIR, exist_ok=True)
 
@@ -30,7 +21,24 @@ os.makedirs(MEMORY_DIR, exist_ok=True)
 
 SAFE_COMMANDS = {"ls", "cat", "head", "tail", "wc", "date", "whoami", "echo"}
 DANGEROUS_PATTERNS = [r"\brm\b", r"\bsudo\b", r"\bchmod\b", r"\bcurl.*\|.*sh"]
-APPROVALS_FILE = "./exec-approvals.json"
+APPROVALS_FILE = "./workspace/exec-approvals.json"
+
+def load_soul(path: str = "workspace/SOUL.md") -> str:
+    try:
+        with open(path, "r") as f:
+            return f.read()
+    except Exception:
+        return ""
+
+def build_memory_prompt() -> str:
+    return """## Memory
+You have a long-term memory system.
+- Use save_memory to store important information (user preferences, key facts, project details).
+- Use memory_search at the start of conversations to recall context from previous sessions.
+Memory files are stored in ./memory/ as markdown files."""
+
+def build_system_prompt() -> str:
+    return load_soul() + "\n\n" + build_memory_prompt()
 
 def load_approvals():
     if os.path.exists(APPROVALS_FILE):
@@ -253,7 +261,7 @@ def run_agent_turn(messages):
         response = client.messages.create(
             model="claude-sonnet-4-6",
             max_tokens=4096,
-            system=SOUL,
+            system=build_system_prompt(),
             tools=registry.descriptions(),
             messages=messages
         )
