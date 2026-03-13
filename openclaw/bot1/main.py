@@ -4,6 +4,7 @@ import json
 import os
 import re
 import subprocess
+from datetime import datetime
 from typing import get_type_hints
 
 import anthropic
@@ -320,13 +321,18 @@ async def handle_message(user_id: str, session_id: str, text: str):
 
 async def main():
     user_id = input("Enter your user ID: ").strip() or "default"
-    session_id = input("Enter your session ID: ").strip() or "default"
-    print(f"Session loaded for user '{user_id}', session '{session_id}'. Type /exit to quit.")
+    session_id = input("Enter your session ID: ").strip() or f"{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    print(f"Session loaded for user '{user_id}', session '{session_id}'. Type /exit to quit. Type /new to reset the session.")
 
     while True:
         text = input("You: ")
-        if text == "/exit":
+        if text == "/quit":
+            print("Goodbye!")
             break
+        elif text == "/new":
+            session_id = f"{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            print(f"Session reset. New session ID: {session_id}")
+            continue
         resp = await handle_message(user_id, session_id, text)
         print(f"Claude: {resp}")
 
