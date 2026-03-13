@@ -11,7 +11,7 @@ load_dotenv()
 
 client = anthropic.Anthropic()
 
-def load_soul(path: str = "SOUL.md") -> str:
+def load_soul(path: str = "workspace/SOUL.md") -> str:
     try:
         with open(path, "r") as f:
             return f.read()
@@ -22,6 +22,9 @@ SOUL = load_soul()
 
 SESSIONS_DIR = "./sessions"
 os.makedirs(SESSIONS_DIR, exist_ok=True)
+
+MEMORY_DIR = "./memory"
+os.makedirs(MEMORY_DIR, exist_ok=True)
 
 SAFE_COMMANDS = {"ls", "cat", "head", "tail", "wc", "date", "whoami", "echo"}
 DANGEROUS_PATTERNS = [r"\brm\b", r"\bsudo\b", r"\bchmod\b", r"\bcurl.*\|.*sh"]
@@ -99,6 +102,38 @@ TOOLS = [
             },
             "required": ["query"]
         }
+    },
+    {
+        "name": "save_memory",
+        "description": "Save important information to long-term memory. Use for user preferences, key facts, and anything worth remembering across sessions.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "key": {
+                    "type": "string",
+                    "description": "Short label, e.g. 'user-preferences', 'project-notes'"
+                },
+                "content": {
+                    "type": "string",
+                    "description": "The information to remember"
+                }
+            },
+            "required": ["key", "content"]
+        }
+    },
+    {
+        "name": "memory_search",
+        "description": "Search long-term memory for relevant information. Use at the start of conversations to recall context.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "What to search for"
+                }
+            },
+            "required": ["query"]
+        }
     }
 ]
 
@@ -132,6 +167,23 @@ def execute_tool(name, tool_input):
 
     elif name == "web_search":
         return f"Search results for: {tool_input['query']}"
+
+    elif name == "save_memory":
+        filepath = os.path.join(MEMORY_DIR, f"{tool_input['key']}.md")
+        with open(filepath, "w") as f:
+            f.write(tool_input["content"])
+        return f"Saved to memory: {tool_input['key']}"
+
+    elif name == "memory_search":
+        query = tool_input["query"].lower()
+        results = []
+        for fname in os.listdir(MEMORY_DIR):
+            if fname.endswith(".md"):
+                with open(os.path.join(MEMORY_DIR, fname), "r") as f:
+                    content = f.read()
+                if any(word in content.lower() for word in query.split()):
+                    results.append(f"--- {fname} ---\n{content}")
+        return "\n\n".join(results) if results else "No matching memories found."
 
     return f"Unknown tool: {name}"
 
