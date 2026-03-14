@@ -379,12 +379,21 @@ def serialize_content(content):
             })
     return serialized
 
-def run_agent_turn(messages):
+def run_agent_turn(messages, system_prompt: str):
+    """Run the agentic loop until the model stops calling tools.
+
+    Args:
+        messages: Conversation history (mutated in-place as turns are appended).
+        system_prompt: Pre-built system prompt string (built once by handle_message).
+
+    Returns:
+        tuple[str, list]: (final text response, updated messages list)
+    """
     while True:
         response = client.messages.create(
             model="claude-sonnet-4-6",
             max_tokens=4096,
-            system=build_system_prompt(),
+            system=system_prompt,
             tools=registry.descriptions(),
             messages=messages
         )
@@ -411,6 +420,13 @@ def run_agent_turn(messages):
                     })
 
             messages.append({"role": "user", "content": tool_results})
+            continue
+
+        # Fallback for unexpected stop reasons (e.g. "max_tokens", "stop_sequence").
+        # Return whatever text was generated rather than losing it or crashing.
+        text = "".join(block.text for block in response.content if hasattr(block, "text"))
+        messages.append({"role": "assistant", "content": content})
+        return text, messages
 
 def get_session_path(user_id, session_id):
     return os.path.join(SESSIONS_DIR, f"{user_id}_{session_id}.jsonl")
@@ -436,7 +452,8 @@ async def handle_message(user_id: str, session_id: str, text: str):
     messages = compact_session(user_id, session_id, messages)
     messages.append({"role": "user", "content": text})
 
-    response_text, messages = run_agent_turn(messages)
+    system_prompt = build_system_prompt()
+    response_text, messages = run_agent_turn(messages, system_prompt)
 
     save_session(user_id, session_id, messages)
     return response_text

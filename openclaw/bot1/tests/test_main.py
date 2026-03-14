@@ -337,3 +337,56 @@ class TestToolReadFile:
         # Must not raise — must return a string
         result = main.tool_read_file("/definitely/does/not/exist/file.md")
         assert isinstance(result, str)
+
+
+from unittest.mock import patch, MagicMock
+
+
+class _FakeTextBlock:
+    """Minimal text block that behaves like anthropic TextBlock for testing."""
+    type = "text"
+
+    def __init__(self, text):
+        self.text = text
+
+
+class TestRunAgentTurn:
+
+    def _make_response(self, stop_reason, text="some text"):
+        response = MagicMock()
+        response.stop_reason = stop_reason
+        response.content = [_FakeTextBlock(text)]
+        return response
+
+    def test_end_turn_returns_tuple(self):
+        response = self._make_response("end_turn", "hello")
+        with patch.object(main.client.messages, "create", return_value=response):
+            result = main.run_agent_turn(
+                [{"role": "user", "content": "hi"}], "system prompt"
+            )
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        text, messages = result
+        assert text == "hello"
+        assert isinstance(messages, list)
+
+    def test_max_tokens_returns_tuple_not_none(self):
+        """Bug fix: previously returned None on unexpected stop_reason."""
+        response = self._make_response("max_tokens", "partial")
+        with patch.object(main.client.messages, "create", return_value=response):
+            result = main.run_agent_turn(
+                [{"role": "user", "content": "hi"}], "system prompt"
+            )
+        assert result is not None
+        text, messages = result
+        assert isinstance(text, str)
+        assert isinstance(messages, list)
+
+    def test_stop_sequence_returns_tuple_not_none(self):
+        response = self._make_response("stop_sequence", "stopped")
+        with patch.object(main.client.messages, "create", return_value=response):
+            result = main.run_agent_turn(
+                [{"role": "user", "content": "hi"}], "system prompt"
+            )
+        assert result is not None
+        assert isinstance(result, tuple)
