@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timedelta
 
 import main
 
@@ -93,3 +94,60 @@ class TestLoadContextFiles:
         result = main.load_context_files()
         assert "OTHER.md" not in result
         assert "SOUL.md" in result
+
+
+class TestLoadDailyMemory:
+
+    def test_returns_empty_if_no_files(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        result = main.load_daily_memory()
+        assert result == ""
+
+    def test_returns_empty_if_memory_dir_missing(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        # No workspace/memory/ dir created
+        result = main.load_daily_memory()
+        assert result == ""
+
+    def test_reads_todays_file(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        memory_dir = tmp_path / "memory"
+        memory_dir.mkdir()
+        today = datetime.now().strftime("%Y-%m-%d")
+        (memory_dir / f"{today}.md").write_text("Today content", encoding="utf-8")
+        result = main.load_daily_memory()
+        assert f"### Memory {today}" in result
+        assert "Today content" in result
+
+    def test_today_appears_before_yesterday(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        memory_dir = tmp_path / "memory"
+        memory_dir.mkdir()
+        today = datetime.now().strftime("%Y-%m-%d")
+        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        (memory_dir / f"{today}.md").write_text("Today", encoding="utf-8")
+        (memory_dir / f"{yesterday}.md").write_text("Yesterday", encoding="utf-8")
+        result = main.load_daily_memory()
+        assert result.index(f"### Memory {today}") < result.index(f"### Memory {yesterday}")
+
+    def test_missing_yesterday_returns_only_today(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        memory_dir = tmp_path / "memory"
+        memory_dir.mkdir()
+        today = datetime.now().strftime("%Y-%m-%d")
+        (memory_dir / f"{today}.md").write_text("Only today", encoding="utf-8")
+        result = main.load_daily_memory()
+        assert "Only today" in result
+        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        assert f"### Memory {yesterday}" not in result
+
+    def test_entries_separated_by_double_newline(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        memory_dir = tmp_path / "memory"
+        memory_dir.mkdir()
+        today = datetime.now().strftime("%Y-%m-%d")
+        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        (memory_dir / f"{today}.md").write_text("A", encoding="utf-8")
+        (memory_dir / f"{yesterday}.md").write_text("B", encoding="utf-8")
+        result = main.load_daily_memory()
+        assert "\n\n" in result

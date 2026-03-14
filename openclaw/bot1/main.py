@@ -77,6 +77,24 @@ def load_context_files() -> dict:
             pass
     return context
 
+def load_daily_memory() -> str:
+    """Load today's and yesterday's daily memory logs from workspace/memory/.
+
+    Returns a formatted string with each present file as a sub-section,
+    today first. Returns "" if neither file exists or can be read.
+    """
+    entries = []
+    for delta in [0, 1]:
+        date_str = (datetime.now() - timedelta(days=delta)).strftime("%Y-%m-%d")
+        path = os.path.join(WORKSPACE_DIR, "memory", f"{date_str}.md")
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                content = f.read()
+            entries.append(f"### Memory {date_str}\n\n{content}")
+        except Exception:
+            pass
+    return "\n\n".join(entries)
+
 def load_approvals():
     if os.path.exists(APPROVALS_FILE):
         with open(APPROVALS_FILE) as f:
