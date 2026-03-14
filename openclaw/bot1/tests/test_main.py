@@ -151,3 +151,72 @@ class TestLoadDailyMemory:
         (memory_dir / f"{yesterday}.md").write_text("B", encoding="utf-8")
         result = main.load_daily_memory()
         assert "\n\n" in result
+
+
+class TestLoadSkillsIndex:
+
+    def test_returns_empty_if_no_skills_dir(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        result = main.load_skills_index()
+        assert result == ""
+
+    def test_returns_empty_if_no_skill_md(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        (tmp_path / "skills" / "empty-skill").mkdir(parents=True)
+        result = main.load_skills_index()
+        assert result == ""
+
+    def test_returns_empty_if_only_plain_files_in_skills(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
+        (skills_dir / "README.md").write_text("readme", encoding="utf-8")
+        result = main.load_skills_index()
+        assert result == ""
+
+    def test_basic_skill_appears_in_xml(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        skill_dir = tmp_path / "skills" / "github"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: github\ndescription: GitHub CLI.\n---\n# GitHub",
+            encoding="utf-8",
+        )
+        result = main.load_skills_index()
+        assert "<name>github</name>" in result
+        assert "<description>GitHub CLI.</description>" in result
+        assert "SKILL.md" in result
+        assert "read_file" in result
+
+    def test_skills_sorted_alphabetically(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        for name in ["weather", "github", "calendar"]:
+            d = tmp_path / "skills" / name
+            d.mkdir(parents=True)
+            (d / "SKILL.md").write_text(f"---\nname: {name}\n---", encoding="utf-8")
+        result = main.load_skills_index()
+        assert result.index("calendar") < result.index("github") < result.index("weather")
+
+    def test_no_frontmatter_falls_back_to_dir_name(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        skill_dir = tmp_path / "skills" / "my-skill"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text("# No frontmatter", encoding="utf-8")
+        result = main.load_skills_index()
+        assert "<name>my-skill</name>" in result
+        assert "<description></description>" in result
+
+    def test_location_path_relative_to_workspace(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        skill_dir = tmp_path / "skills" / "github"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text("---\nname: github\n---", encoding="utf-8")
+        result = main.load_skills_index()
+        assert "<location>" in result
+        assert "SKILL.md" in result
+
+    def test_no_empty_available_skills_block(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        (tmp_path / "skills").mkdir()
+        result = main.load_skills_index()
+        assert "<available_skills>" not in result

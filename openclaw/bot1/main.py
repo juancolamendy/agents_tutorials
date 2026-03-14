@@ -95,6 +95,53 @@ def load_daily_memory() -> str:
             pass
     return "\n\n".join(entries)
 
+def load_skills_index() -> str:
+    """Scan workspace/skills/ and build a compact XML skills index.
+
+    Returns the preamble + <available_skills> XML block, or "" if no
+    skills are found or the directory does not exist.
+    """
+    skills_dir = os.path.join(WORKSPACE_DIR, "skills")
+    try:
+        entries = sorted(os.listdir(skills_dir))
+    except OSError:
+        return ""
+
+    skills = []
+    for name in entries:
+        dir_path = os.path.join(skills_dir, name)
+        if not os.path.isdir(dir_path):
+            continue
+        skill_file = os.path.join(dir_path, "SKILL.md")
+        try:
+            with open(skill_file, "r", encoding="utf-8") as f:
+                content = f.read()
+        except Exception:
+            continue
+        meta = parse_skill_frontmatter(content)
+        skills.append({
+            "name": meta.get("name", name),
+            "description": meta.get("description", ""),
+            "location": os.path.join(WORKSPACE_DIR, "skills", name, "SKILL.md"),
+        })
+
+    if not skills:
+        return ""
+
+    xml_entries = "\n".join(
+        f"  <skill>\n"
+        f"    <name>{s['name']}</name>\n"
+        f"    <description>{s['description']}</description>\n"
+        f"    <location>{s['location']}</location>\n"
+        f"  </skill>"
+        for s in skills
+    )
+    return (
+        "When a task matches one of the skills below, use the `read_file` tool to "
+        "load the SKILL.md at the listed location for detailed instructions.\n\n"
+        f"<available_skills>\n{xml_entries}\n</available_skills>"
+    )
+
 def load_approvals():
     if os.path.exists(APPROVALS_FILE):
         with open(APPROVALS_FILE) as f:
