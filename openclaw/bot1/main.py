@@ -269,8 +269,11 @@ def tool_read_file(path: str) -> str:
     """Read a file from the filesystem.
     :param path: Path to the file.
     """
-    with open(path, "r") as f:
-        return f.read()
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception as e:
+        return f"Error reading {path}: {e}"
 
 def tool_write_file(path: str, content: str) -> str:
     """Write content to a file.

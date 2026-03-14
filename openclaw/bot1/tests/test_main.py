@@ -312,3 +312,28 @@ class TestBuildSystemPrompt:
         result = main.build_system_prompt()
         # Just verify no section for the tool memory dir leaks in
         assert "user-preferences" not in result
+
+
+class TestToolReadFile:
+
+    def test_returns_error_string_for_missing_file(self, tmp_path):
+        result = main.tool_read_file(str(tmp_path / "nonexistent.txt"))
+        assert isinstance(result, str)
+        assert "Error reading" in result
+
+    def test_reads_utf8_with_emoji(self, tmp_path):
+        path = tmp_path / "test.md"
+        path.write_text("Hello 🌍", encoding="utf-8")
+        result = main.tool_read_file(str(path))
+        assert result == "Hello 🌍"
+
+    def test_reads_normal_file(self, tmp_path):
+        path = tmp_path / "test.txt"
+        path.write_text("content here", encoding="utf-8")
+        result = main.tool_read_file(str(path))
+        assert result == "content here"
+
+    def test_returns_error_string_not_exception(self, tmp_path):
+        # Must not raise — must return a string
+        result = main.tool_read_file("/definitely/does/not/exist/file.md")
+        assert isinstance(result, str)
