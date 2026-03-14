@@ -220,3 +220,95 @@ class TestLoadSkillsIndex:
         (tmp_path / "skills").mkdir()
         result = main.load_skills_index()
         assert "<available_skills>" not in result
+
+
+class TestBuildMemoryPrompt:
+
+    def test_header_is_memory_instructions(self):
+        result = main.build_memory_prompt()
+        assert result.startswith("## Memory Instructions")
+
+    def test_no_old_header(self):
+        result = main.build_memory_prompt()
+        # Old header must not appear
+        assert "## Memory\n" not in result
+
+    def test_contains_save_memory_reference(self):
+        result = main.build_memory_prompt()
+        assert "save_memory" in result
+
+    def test_contains_memory_search_reference(self):
+        result = main.build_memory_prompt()
+        assert "memory_search" in result
+
+
+class TestBuildSystemPrompt:
+
+    def test_date_section_always_first(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        result = main.build_system_prompt()
+        assert result.startswith("## Current Date & Time")
+
+    def test_date_is_date_only_no_time(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        result = main.build_system_prompt()
+        # Should contain the day name (e.g. "Saturday") but NOT ":" (which appears in HH:MM)
+        lines = result.splitlines()
+        date_line = lines[2]  # third line after header and blank
+        assert ":" not in date_line
+
+    def test_no_empty_context_headers(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        result = main.build_system_prompt()
+        for fname in main.CONTEXT_FILES:
+            assert f"## {fname}\n\n\n" not in result
+            # If the file doesn't exist, the header must not appear
+            assert f"## {fname}" not in result
+
+    def test_soul_md_included_when_present(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        (tmp_path / "SOUL.md").write_text("You are Jarvis.", encoding="utf-8")
+        result = main.build_system_prompt()
+        assert "## SOUL.md" in result
+        assert "You are Jarvis." in result
+
+    def test_context_files_in_correct_order(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        (tmp_path / "AGENTS.md").write_text("agents", encoding="utf-8")
+        (tmp_path / "SOUL.md").write_text("soul", encoding="utf-8")
+        result = main.build_system_prompt()
+        assert result.index("## AGENTS.md") < result.index("## SOUL.md")
+
+    def test_recent_memory_included_when_present(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        memory_dir = tmp_path / "memory"
+        memory_dir.mkdir()
+        today = datetime.now().strftime("%Y-%m-%d")
+        (memory_dir / f"{today}.md").write_text("Remember this.", encoding="utf-8")
+        result = main.build_system_prompt()
+        assert "## Recent Memory" in result
+        assert "Remember this." in result
+
+    def test_skills_section_included_when_present(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        skill_dir = tmp_path / "skills" / "github"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: github\ndescription: GitHub CLI.\n---", encoding="utf-8"
+        )
+        result = main.build_system_prompt()
+        assert "## Skills" in result
+        assert "github" in result
+
+    def test_memory_instructions_always_present(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        result = main.build_system_prompt()
+        assert "## Memory Instructions" in result
+
+    def test_long_term_memory_dir_not_in_prompt(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        # The ./memory/ tool memory dir content must NOT appear in the system prompt
+        # Only workspace/memory/ daily logs do
+        result = main.build_system_prompt()
+        # Just verify no section for the tool memory dir leaks in
+        assert "user-preferences" not in result

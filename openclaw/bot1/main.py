@@ -27,22 +27,40 @@ APPROVALS_FILE = "./workspace/exec-approvals.json"
 WORKSPACE_DIR = "./workspace"
 CONTEXT_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "IDENTITY.md", "TOOLS.md"]
 
-def load_soul(path: str = "workspace/SOUL.md") -> str:
-    try:
-        with open(path, "r") as f:
-            return f.read()
-    except Exception:
-        return ""
-
 def build_memory_prompt() -> str:
-    return """## Memory
+    return """## Memory Instructions
 You have a long-term memory system.
 - Use save_memory to store important information (user preferences, key facts, project details).
 - Use memory_search at the start of conversations to recall context from previous sessions.
 Memory files are stored in ./memory/ as markdown files."""
 
 def build_system_prompt() -> str:
-    return load_soul() + "\n\n" + build_memory_prompt()
+    """Assemble the system prompt from workspace files, skills index, and memory instructions."""
+    parts = []
+
+    # 1. Date (always present, date-only for prompt caching compatibility)
+    date_str = datetime.now().strftime("%A, %B %d, %Y")
+    parts.append(f"## Current Date & Time\n\n{date_str}")
+
+    # 2–6. Context files (in CONTEXT_FILES order, silently skip missing)
+    for filename, content in load_context_files().items():
+        if content:
+            parts.append(f"## {filename}\n\n{content}")
+
+    # 7. Daily memory logs
+    daily_mem = load_daily_memory()
+    if daily_mem:
+        parts.append(f"## Recent Memory\n\n{daily_mem}")
+
+    # 8. Skills index
+    skills = load_skills_index()
+    if skills:
+        parts.append(f"## Skills\n\n{skills}")
+
+    # 9. Memory tool instructions (always present)
+    parts.append(build_memory_prompt())
+
+    return "\n\n".join(parts)
 
 def parse_skill_frontmatter(content: str) -> dict:
     """Parse YAML-style frontmatter from a SKILL.md file.
