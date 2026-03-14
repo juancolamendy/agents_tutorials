@@ -336,4 +336,5 @@ async def main():
         resp = await handle_message(user_id, session_id, text)
         print(f"Claude: {resp}")
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
