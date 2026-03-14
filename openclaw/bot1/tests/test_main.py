@@ -1,3 +1,5 @@
+import os
+
 import main
 
 
@@ -41,3 +43,53 @@ class TestParseSkillFrontmatter:
         content = "---\nname: github\n"
         result = main.parse_skill_frontmatter(content)
         assert result == {}
+
+
+class TestLoadContextFiles:
+
+    def test_reads_existing_file(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        (tmp_path / "SOUL.md").write_text("You are Jarvis.", encoding="utf-8")
+        result = main.load_context_files()
+        assert "SOUL.md" in result
+        assert result["SOUL.md"] == "You are Jarvis."
+
+    def test_missing_file_silently_skipped(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        # No files created
+        result = main.load_context_files()
+        assert result == {}
+
+    def test_preserves_context_files_order(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        for fname in ["TOOLS.md", "AGENTS.md", "SOUL.md"]:
+            (tmp_path / fname).write_text(f"# {fname}", encoding="utf-8")
+        result = main.load_context_files()
+        keys = list(result.keys())
+        assert keys.index("AGENTS.md") < keys.index("SOUL.md")
+        assert keys.index("SOUL.md") < keys.index("TOOLS.md")
+
+    def test_unreadable_file_silently_skipped(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        soul = tmp_path / "SOUL.md"
+        soul.write_text("content", encoding="utf-8")
+        soul.chmod(0o000)
+        try:
+            result = main.load_context_files()
+            assert "SOUL.md" not in result
+        finally:
+            soul.chmod(0o644)
+
+    def test_reads_utf8_content(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        (tmp_path / "SOUL.md").write_text("Name: Jàrvis 🤖", encoding="utf-8")
+        result = main.load_context_files()
+        assert result["SOUL.md"] == "Name: Jàrvis 🤖"
+
+    def test_only_context_files_loaded(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        (tmp_path / "SOUL.md").write_text("soul", encoding="utf-8")
+        (tmp_path / "OTHER.md").write_text("other", encoding="utf-8")
+        result = main.load_context_files()
+        assert "OTHER.md" not in result
+        assert "SOUL.md" in result

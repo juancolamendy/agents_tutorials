@@ -61,6 +61,22 @@ def parse_skill_frontmatter(content: str) -> dict:
         meta[key.strip()] = value.strip()
     return meta
 
+def load_context_files() -> dict:
+    """Load workspace context markdown files.
+
+    Returns a dict mapping filename to content, in CONTEXT_FILES order.
+    Missing or unreadable files are silently skipped.
+    """
+    context = {}
+    for filename in CONTEXT_FILES:
+        path = os.path.join(WORKSPACE_DIR, filename)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                context[filename] = f.read()
+        except Exception:
+            pass
+    return context
+
 def load_approvals():
     if os.path.exists(APPROVALS_FILE):
         with open(APPROVALS_FILE) as f:
