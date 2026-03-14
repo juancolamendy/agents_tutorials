@@ -44,6 +44,23 @@ Memory files are stored in ./memory/ as markdown files."""
 def build_system_prompt() -> str:
     return load_soul() + "\n\n" + build_memory_prompt()
 
+def parse_skill_frontmatter(content: str) -> dict:
+    """Parse YAML-style frontmatter from a SKILL.md file.
+
+    Returns a dict of key/value pairs from the frontmatter block,
+    or {} if frontmatter is absent or malformed.
+    """
+    parts = re.split(r"^---\s*$", content, maxsplit=2, flags=re.MULTILINE)
+    if len(parts) < 3:
+        return {}
+    meta = {}
+    for line in parts[1].splitlines():
+        if not line.strip():
+            continue
+        key, _, value = line.partition(":")
+        meta[key.strip()] = value.strip()
+    return meta
+
 def load_approvals():
     if os.path.exists(APPROVALS_FILE):
         with open(APPROVALS_FILE) as f:
