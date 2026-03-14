@@ -221,6 +221,19 @@ class TestLoadSkillsIndex:
         result = main.load_skills_index()
         assert "<available_skills>" not in result
 
+    def test_xml_special_chars_in_description_are_escaped(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        skill_dir = tmp_path / "skills" / "myskill"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: test\ndescription: Load <data> & save\n---",
+            encoding="utf-8",
+        )
+        result = main.load_skills_index()
+        assert "<data>" not in result
+        assert "&lt;data&gt;" in result
+        assert "&amp;" in result
+
 
 class TestBuildMemoryPrompt:
 

@@ -1,4 +1,5 @@
 import asyncio
+import html
 import inspect
 import json
 import os
@@ -148,9 +149,9 @@ def load_skills_index() -> str:
 
     xml_entries = "\n".join(
         f"  <skill>\n"
-        f"    <name>{s['name']}</name>\n"
-        f"    <description>{s['description']}</description>\n"
-        f"    <location>{s['location']}</location>\n"
+        f"    <name>{html.escape(s['name'])}</name>\n"
+        f"    <description>{html.escape(s['description'])}</description>\n"
+        f"    <location>{html.escape(s['location'])}</location>\n"
         f"  </skill>"
         for s in skills
     )
