@@ -4,7 +4,7 @@ import json
 import os
 import re
 import subprocess
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import get_type_hints
 
 import anthropic
@@ -23,6 +23,9 @@ os.makedirs(MEMORY_DIR, exist_ok=True)
 SAFE_COMMANDS = {"ls", "cat", "head", "tail", "wc", "date", "whoami", "echo"}
 DANGEROUS_PATTERNS = [r"\brm\b", r"\bsudo\b", r"\bchmod\b", r"\bcurl.*\|.*sh"]
 APPROVALS_FILE = "./workspace/exec-approvals.json"
+
+WORKSPACE_DIR = "./workspace"
+CONTEXT_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "IDENTITY.md", "TOOLS.md"]
 
 def load_soul(path: str = "workspace/SOUL.md") -> str:
     try:
