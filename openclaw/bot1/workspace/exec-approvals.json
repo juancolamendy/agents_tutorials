@@ -1,0 +1,7 @@
+{
+  "allowed": [
+    "curl -s \"wttr.in/Coconut+Creek,FL?format=3\"",
+    "curl -s \"wttr.in/Port+Saint+Lucie,FL?format=3\""
+  ],
+  "denied": []
+}
