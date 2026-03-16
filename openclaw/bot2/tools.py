@@ -87,10 +87,13 @@ class BotToolkit(Toolkit):
             if not approved:
                 return "Command denied by user."
 
-        result = subprocess.run(
-            command, shell=True, capture_output=True, text=True, timeout=30
-        )
-        return result.stdout + result.stderr
+        try:
+            result = subprocess.run(
+                command, shell=True, capture_output=True, text=True, timeout=30
+            )
+            return result.stdout + result.stderr
+        except subprocess.TimeoutExpired:
+            return f"Command timed out after 30 seconds: {command}"
 
     def read_file(self, path: str) -> str:
         """Read a file from the filesystem.

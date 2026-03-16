@@ -34,6 +34,17 @@ class TestRunCommand:
         assert isinstance(result, str)
         assert len(result) > 0
 
+    def test_timeout_returns_error_string(self, toolkit, monkeypatch):
+        monkeypatch.setattr(
+            "subprocess.run",
+            lambda *a, **kw: (_ for _ in ()).throw(
+                __import__("subprocess").TimeoutExpired(cmd="sleep 999", timeout=30)
+            ),
+        )
+        result = toolkit.run_command("echo hello")
+        assert "timed out" in result.lower()
+        assert isinstance(result, str)
+
     def test_previously_approved_command_skips_prompt(self, tmp_path):
         approvals = {"allowed": ["pwd"], "denied": []}
         approvals_file = str(tmp_path / "approvals.json")
