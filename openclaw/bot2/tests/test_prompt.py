@@ -186,10 +186,6 @@ class TestBuildSystemPrompt:
         result = prompt.build_system_prompt()
         assert result.startswith("## Current Date & Time")
 
-    def test_memory_instructions_always_present(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(prompt, "WORKSPACE_DIR", str(tmp_path))
-        result = prompt.build_system_prompt()
-        assert "## Memory Instructions" in result
 
     def test_soul_md_included_when_present(self, tmp_path, monkeypatch):
         monkeypatch.setattr(prompt, "WORKSPACE_DIR", str(tmp_path))

@@ -95,14 +95,6 @@ def load_skills_index() -> str:
     )
 
 
-def _build_memory_prompt() -> str:
-    return """## Memory Instructions
-You have a long-term memory system.
-- Use save_memory to store important information (user preferences, key facts, project details).
-- Use memory_search at the start of conversations to recall context from previous sessions.
-Memory files are stored in ./memory/ as markdown files."""
-
-
 def build_system_prompt() -> str:
     """Assemble the full system prompt from workspace files, skills index, and memory instructions."""
     parts = []
@@ -121,7 +113,5 @@ def build_system_prompt() -> str:
     skills = load_skills_index()
     if skills:
         parts.append(f"## Skills\n\n{skills}")
-
-    parts.append(_build_memory_prompt())
 
     return "\n\n".join(parts)
