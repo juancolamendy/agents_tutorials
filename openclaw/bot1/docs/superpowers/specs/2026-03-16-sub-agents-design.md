@@ -65,11 +65,9 @@ _agents_registry: dict[str, dict] = {}
 # Populated by load_agents_index()
 # key: frontmatter "name" value
 # value: {"file_path": str, "model": str | None}
-
-_current_session: dict = {"user_id": None, "session_id": None}
-# Set in handle_message() before run_agent_turn()
-# Safe for single-user CLI; not safe for concurrent multi-user use
 ```
+
+No `_current_session` global. Session identity is captured via closure inside `handle_message`.
 
 ### `extract_frontmatter_body(content: str) -> str`
 
@@ -123,24 +121,28 @@ if agents:
 
 ### `handle_message()` update
 
-Set `_current_session` before calling `run_agent_turn`:
+Create a closure over `user_id` and `session_id`, then re-register `run_agent` before calling `run_agent_turn`:
 
 ```python
-_current_session["user_id"] = user_id
-_current_session["session_id"] = session_id
+def _make_tool_run_agent(user_id: str, session_id: str):
+    def tool_run_agent(agent_name: str, input: str) -> str:
+        """Dispatch a task to a specialized sub-agent and return its response.
+        :param agent_name: Name of the agent as listed in the agents index.
+        :param input: The task or question to send to the agent.
+        """
+        # ... (see tool_run_agent steps below) ...
+        messages = load_session(user_id, session_id)
+        messages = messages + [{"role": "user", "content": input}]
+        ...
+    return tool_run_agent
+
+# In handle_message, before run_agent_turn:
+registry.register("run_agent", _make_tool_run_agent(user_id, session_id))
 ```
 
 ### `tool_run_agent(agent_name: str, input: str) -> str`
 
-Docstring follows `:param` convention:
-
-```python
-def tool_run_agent(agent_name: str, input: str) -> str:
-    """Dispatch a task to a specialized sub-agent and return its response.
-    :param agent_name: Name of the agent as listed in the agents index.
-    :param input: The task or question to send to the agent.
-    """
-```
+Defined as a closure inside `_make_tool_run_agent(user_id, session_id)`. The outer function is called in `handle_message` and the result registered as `run_agent`. No global session state needed.
 
 Execution steps:
 
@@ -155,17 +157,11 @@ Execution steps:
 
 4. model = entry["model"] or "claude-sonnet-4-6"
 
-5. user_id = _current_session["user_id"]
-   session_id = _current_session["session_id"]
-   if user_id is None or session_id is None:
-       messages = []
-   else:
-       messages = load_session(user_id, session_id)
-
-6. messages = messages + [{"role": "user", "content": input}]
+5. messages = load_session(user_id, session_id)   ← closed-over values
+   messages = messages + [{"role": "user", "content": input}]
    (do not mutate the loaded list in place)
 
-7. try:
+6. try:
        response = client.messages.create(
            model=model,
            max_tokens=4096,
@@ -192,19 +188,18 @@ User message
     │
     ▼
 handle_message(user_id, session_id, text)
-    ├─ _current_session["user_id"] = user_id
-    ├─ _current_session["session_id"] = session_id
     ├─ build_system_prompt()
     │     └─ load_agents_index() → populates _agents_registry, returns XML
+    ├─ registry.register("run_agent", _make_tool_run_agent(user_id, session_id))
     └─ run_agent_turn(messages, system_prompt)
            │
            ▼  (LLM decides to call run_agent tool)
        execute_tool("run_agent", {agent_name, input})
            │
            ▼
-       tool_run_agent(agent_name, input)
+       tool_run_agent(agent_name, input)  ← closure over user_id, session_id
            ├─ [not found] → return error string
-           ├─ load_session() → messages  ([] if _current_session unset)
+           ├─ load_session(user_id, session_id) → messages
            ├─ messages + [{role: user, content: input}]
            └─ client.messages.create(system=body, messages=messages)
                    │
@@ -222,7 +217,7 @@ handle_message(user_id, session_id, text)
 | Agent file unreadable | Return `"Error running agent '{agent_name}': {e}"` |
 | API call fails | Return `"Error running agent '{agent_name}': {e}"` |
 | `model` field absent/empty in frontmatter | Default to `"claude-sonnet-4-6"` at dispatch |
-| `_current_session` user_id/session_id is `None` | `messages = []`; sub-agent receives only `input` |
+| No prior session messages | `load_session` returns `[]`; sub-agent receives only `input` |
 | Agent has no frontmatter `name` field | Agent silently skipped by `load_agents_index` |
 
 ---
@@ -260,7 +255,7 @@ Required cases:
 - Agent file unreadable → returns error string
 - API exception → returns error string
 - Successful call → returns response text
-- `_current_session` with None values → `messages` starts as `[]`
+- Empty session (no prior messages) → `messages` starts as `[]`, only input appended
 - `model` absent in registry entry → uses `claude-sonnet-4-6`
 
 ### `TestBuildSystemPrompt` (addition)
