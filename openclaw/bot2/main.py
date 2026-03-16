@@ -55,6 +55,7 @@ def build_agent() -> Agent:
         add_history_to_context=True,
         num_history_runs=20,
         max_tool_calls_from_history=5,
+        debug_mode=True,
     )
 
 
