@@ -155,6 +155,17 @@ class TestLoadSkillsIndex:
         assert "<description>GitHub CLI.</description>" in result
         assert "SKILL.md" in result
         assert "read_file" in result
+        assert "<directory>" in result
+        assert str(skill_dir) in result
+
+    def test_skill_directory_path_instruction_present(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(prompt, "WORKSPACE_DIR", str(tmp_path))
+        skill_dir = tmp_path / "skills" / "weather"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text("---\nname: weather\n---", encoding="utf-8")
+        result = prompt.load_skills_index()
+        assert "relative to that" in result
+        assert "run_command" in result
 
     def test_skills_sorted_alphabetically(self, tmp_path, monkeypatch):
         monkeypatch.setattr(prompt, "WORKSPACE_DIR", str(tmp_path))

@@ -75,6 +75,7 @@ def load_skills_index() -> str:
             "name": meta.get("name", name),
             "description": meta.get("description", ""),
             "location": os.path.join(WORKSPACE_DIR, "skills", name, "SKILL.md"),
+            "directory": os.path.join(WORKSPACE_DIR, "skills", name),
         })
 
     if not skills:
@@ -85,12 +86,17 @@ def load_skills_index() -> str:
         f"    <name>{html.escape(s['name'])}</name>\n"
         f"    <description>{html.escape(s['description'])}</description>\n"
         f"    <location>{html.escape(s['location'])}</location>\n"
+        f"    <directory>{html.escape(s['directory'])}</directory>\n"
         f"  </skill>"
         for s in skills
     )
     return (
         "When a task matches one of the skills below, use the `read_file` tool to "
         "load the SKILL.md at the listed location for detailed instructions.\n\n"
+        "All scripts and paths referenced inside a SKILL.md are relative to that "
+        "skill's <directory>. For example, if a skill says `uv run ./scripts/foo.py`, "
+        "the full path is <directory>/scripts/foo.py. Always prefix script paths with "
+        "the skill's <directory> when calling run_command.\n\n"
         f"<available_skills>\n{xml_entries}\n</available_skills>"
     )
 
