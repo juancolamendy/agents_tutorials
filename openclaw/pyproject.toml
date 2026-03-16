@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "agno>=1.0",
     "anthropic>=0.84.0",
     "python-dotenv>=1.2.2",
 ]
@@ -12,6 +13,9 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
 
+[tool.setuptools.packages.find]
+include = ["bot1*", "bot2*"]
+
 [tool.pytest.ini_options]
-pythonpath = ["bot1"]
-testpaths = ["bot1/tests"]
+pythonpath = ["bot1", "bot2"]
+testpaths = ["bot1/tests", "bot2/tests"]
