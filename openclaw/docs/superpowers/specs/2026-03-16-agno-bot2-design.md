@@ -43,14 +43,18 @@ CLI (main.py)
 #### `storage.py` — `JsonlAgentDb`
 - Extends `agno.db.base.BaseDb`
 - Implements `read`, `upsert`, `get_all_session_ids`, `get_all_sessions`, `delete_session`
-- Files stored at `sessions/{user_id}_{session_id}.jsonl`
-- Compatible with bot1 session files (same JSONL format)
+- Files stored at `sessions/{user_id}_{session_id}.jsonl` (same filename convention as bot1)
+- Content schema differs from bot1 (stores `AgentSession` JSON, not raw message lists)
+- Single-line overwrite model: `upsert` writes one JSON line; `.jsonl` extension is kept for filename convention only
 - **Does NOT include `save_memory` or `memory_search`** — those are delegated entirely to `MemoryTools`
 - **Swap path:** replace with `SqliteDb` or `PostgresDb` at construction (one line)
 
 #### `memory_db.py` — `MarkdownMemoryDb`
-- Extends `agno.db.base.BaseDb` (same base class as session storage)
-- Must implement: `read`, `upsert`, `search` (keyword search across `.md` files)
+- Does **NOT** extend `BaseDb` — `MemoryTools.db` uses a different interface from
+  session storage. The exact adapter method names must be inspected from `MemoryTools`
+  source before implementing (see CLAUDE.md pitfall #12 and plan Task 5 Step 1).
+- Core logic: `save(key, content)` and `search(query)` with keyword matching across `.md` files.
+- Adapter layer: wrappers with the exact method names Agno calls on `db`.
 - Stores memories as `memory/{key}.md` files — compatible with bot1 memory files
 - Passed as `MemoryTools(db=MarkdownMemoryDb(MEMORY_DIR))`
 
@@ -74,8 +78,11 @@ CLI (main.py)
 #### `main.py` — CLI Entry Point
 ```python
 agent = Agent(
-    model=Claude(id="claude-sonnet-4-6"),
-    tools=[BotToolkit(), MemoryTools(db=MarkdownMemoryDb(MEMORY_DIR))],
+    model=Claude(id="claude-sonnet-4-6", cache_system_prompt=True),  # cache large prompt
+    tools=[
+        BotToolkit(approvals_file=os.path.join(_HERE, "workspace", "exec-approvals.json")),
+        MemoryTools(db=MarkdownMemoryDb(MEMORY_DIR)),
+    ],
     db=JsonlAgentDb(sessions_dir=SESSIONS_DIR),
     system_message=build_system_prompt(),
     add_history_to_context=True,
@@ -83,10 +90,21 @@ agent = Agent(
     max_tool_calls_from_history=5,   # guards against large tool-output context bloat
 )
 
-# loop
-response = agent.run(text, user_id=user_id, session_id=session_id)
-print(f"Claude: {response.content or ''}")  # content can be None on tool-only turns
+# loop — wrap agent.run() to handle network/API errors gracefully
+try:
+    response = agent.run(text, user_id=user_id, session_id=session_id)
+    print(f"Claude: {response.content or ''}")
+except KeyboardInterrupt:
+    raise
+except Exception as e:
+    print(f"Error: {e}")
 ```
+
+**Key constraints:**
+- `BotToolkit` receives absolute `approvals_file` path (consistent with `SESSIONS_DIR`/`MEMORY_DIR`).
+- `cache_system_prompt=True` — system prompt includes large workspace files; caching is meaningful.
+- Main loop catches exceptions to prevent single API/network failures from crashing the bot.
+- `input()` raises `EOFError` if stdin is closed (e.g. piped input); handle or document.
 
 ### 2.3 What Is Removed
 
@@ -109,7 +127,7 @@ print(f"Claude: {response.content or ''}")  # content can be None on tool-only t
 ### 2.4 What Is Preserved
 
 - All workspace files: `SOUL.md`, context files, `skills/` directory
-- Session file format: `sessions/{user_id}_{session_id}.jsonl`
+- Session file naming: `sessions/{user_id}_{session_id}.jsonl` (content schema differs from bot1)
 - Memory file format: `memory/{key}.md` (long-term agent memory)
 - Safety approval logic and `exec-approvals.json`
 - CLI commands: `/quit`, `/exit`, `/new`
@@ -158,19 +176,23 @@ No other code changes required. `Agent` consumes the `BaseDb` interface only.
 
 ```
 bot2/
+├── .gitignore           ← excludes: .env, sessions/, memory/ (runtime artifacts)
 ├── CLAUDE.md
 ├── main.py
 ├── prompt.py
 ├── storage.py           ← JsonlAgentDb
 ├── memory_db.py         ← MarkdownMemoryDb
 ├── tools.py             ← BotToolkit
-├── sessions/            ← JSONL session files (same format as bot1)
-├── memory/              ← long-term agent memory (*.md files, keyed by save_memory calls)
+├── sessions/            ← JSONL session files (git-ignored; same filename format as bot1)
+├── memory/              ← long-term agent memory (git-ignored; *.md keyed by save_memory)
 └── workspace/
     ├── SOUL.md
     ├── skills/
     └── memory/          ← daily memory logs (YYYY-MM-DD.md, read into system prompt)
 ```
+
+> **Note:** `sessions/` and `memory/` contain runtime data and must be git-ignored.
+> `.env` must also be git-ignored. See gitignore step in the implementation plan.
 
 ---
 
@@ -191,7 +213,7 @@ Add to `pyproject.toml`:
 ```toml
 [project]
 dependencies = [
-    "agno",
+    "agno>=0.5,<1.0",   # upper bound — Agno is fast-moving; major versions may break API
     "anthropic",
     "python-dotenv",
 ]

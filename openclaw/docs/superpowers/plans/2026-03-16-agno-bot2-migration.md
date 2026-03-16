@@ -4,7 +4,7 @@
 
 **Goal:** Migrate the bot1 OpenClaw CLI chatbot to the Agno agentic framework in `bot2/`, preserving full feature parity while replacing all hand-rolled infrastructure with Agno equivalents.
 
-**Architecture:** Each bot1 custom layer maps 1-to-1 to an Agno equivalent: `ToolRegistry` → `BotToolkit(Toolkit)`, `run_agent_turn()` → `Agent.run()`, JSONL session files → `JsonlAgentDb(BaseDb)`, markdown memory → `MarkdownMemoryDb(BaseDb)` + `MemoryTools`, prompt assembly → preserved `prompt.py`. Storage is swappable by replacing one `db=` argument.
+**Architecture:** Each bot1 custom layer maps 1-to-1 to an Agno equivalent: `ToolRegistry` → `BotToolkit(Toolkit)`, `run_agent_turn()` → `Agent.run()`, JSONL session files → `JsonlAgentDb(BaseDb)`, markdown memory → `MarkdownMemoryDb` (duck-typed for MemoryTools) + `MemoryTools`, prompt assembly → preserved `prompt.py`. Storage is swappable by replacing one `db=` argument.
 
 **Tech Stack:** Python 3.12, `agno>=0.5`, `anthropic`, `python-dotenv`, `pytest`
 
@@ -54,7 +54,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "agno>=0.5",
+    "agno>=0.5,<1.0",       # upper bound — Agno is fast-moving; major versions may break API
     "anthropic>=0.84.0",
     "python-dotenv>=1.2.2",
 ]
@@ -66,6 +66,13 @@ dev = ["pytest>=8.0"]
 pythonpath = ["bot1", "bot2"]
 testpaths = ["bot1/tests", "bot2/tests"]
 ```
+
+> **Known risk:** `pythonpath = ["bot1", "bot2"]` adds both bot directories as flat module
+> roots. Both bots have `main.py` — `import main` resolves to `bot1/main.py` everywhere
+> (bot1 listed first). Bot2 tests use unique module names (`storage`, `memory_db`, `tools`,
+> `prompt`) that don't exist in bot1, so there are no current conflicts. Avoid adding modules
+> to bot2 that share names with bot1 modules. If the project grows, migrate to
+> `pythonpath = ["."]` and use `from bot2.storage import ...` imports.
 
 - [ ] **Step 2: Install dependencies**
 
@@ -81,10 +88,23 @@ Expected: Installs without errors. `python -c "import agno"` should succeed.
 touch bot2/__init__.py bot2/tests/__init__.py
 ```
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: Create bot2/.gitignore**
 
 ```bash
-git add pyproject.toml bot2/__init__.py bot2/tests/__init__.py
+cat > bot2/.gitignore << 'EOF'
+.env
+sessions/
+memory/
+__pycache__/
+*.pyc
+.pytest_cache/
+EOF
+```
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add pyproject.toml bot2/__init__.py bot2/tests/__init__.py bot2/.gitignore
 git commit -m "chore: scaffold bot2 package and add agno dependency"
 ```
 
@@ -362,7 +382,9 @@ import os
 import re
 from datetime import datetime, timedelta
 
-WORKSPACE_DIR = "./workspace"
+# Resolve relative to this file so the bot works from any working directory.
+# Do NOT use "./workspace" — it breaks when invoked from outside bot2/.
+WORKSPACE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "workspace")
 CONTEXT_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "IDENTITY.md", "TOOLS.md"]
 
 
@@ -528,6 +550,7 @@ python -c "from agno.db.session import AgentSession; s = AgentSession(session_id
 
 **Read the output carefully:**
 - List every `@abstractmethod` in `BaseDb` — these MUST be implemented in `JsonlAgentDb`
+- **Check `delete_session` signature** — if it takes `user_id` as well as `session_id`, update both `storage.py` and `test_storage.py`. The implementation assumes no `user_id` parameter; if wrong it's an abstract method violation.
 - If `from agno.db.session import AgentSession` fails, try `from agno.models.session import AgentSession` or search: `python -c "import agno; import pkgutil; [print(m.name) for m in pkgutil.walk_packages(agno.__path__, 'agno.') if 'session' in m.name]"`
 - If `AgentSession(user_id=None)` raises a validation error, the `test_read_with_no_user_id` test must be removed or adjusted
 - If `BaseDb` abstract method signatures differ from the plan, update `storage.py` and `test_storage.py` accordingly before proceeding
@@ -565,17 +588,26 @@ class TestJsonlAgentDb:
         assert loaded.session_id == "s1"
         assert loaded.user_id == "u1"
 
-    def test_upsert_overwrites_existing(self, db):
+    def test_upsert_overwrites_existing(self, db, tmp_path):
         from agno.db.session import AgentSession
-        # First upsert with no runs; second with a modified state
+        # First upsert — write a distinguishable initial state
         s1 = AgentSession(session_id="s1", user_id="u1")
         db.upsert(s1)
-        # Modify the session and upsert again — read should return the updated state
+        first_content = (tmp_path / "u1_s1.jsonl").read_text()
+
+        # Upsert again — file content must change to prove overwrite happened
         s2 = AgentSession(session_id="s1", user_id="u1")
         db.upsert(s2)
+        second_content = (tmp_path / "u1_s1.jsonl").read_text()
+
+        # File was rewritten (at minimum, timestamps or internal counters differ)
+        # Core assertions: file exists, loads correctly, and write was called twice
         loaded = db.read(session_id="s1", user_id="u1")
         assert loaded is not None
         assert loaded.session_id == "s1"
+        # Verify only one line in file (overwrite, not append)
+        lines = [l for l in second_content.splitlines() if l.strip()]
+        assert len(lines) == 1, f"Expected single-line JSON, got {len(lines)} lines"
 
     def test_get_all_session_ids_returns_ids_for_user(self, db):
         from agno.db.session import AgentSession
@@ -646,10 +678,12 @@ from agno.db.session import AgentSession
 
 
 class JsonlAgentDb(BaseDb):
-    """JSONL-backed agent storage. Each session is one file: sessions/{user_id}_{session_id}.jsonl.
-    Uses the same file naming convention as bot1 but stores AgentSession objects (not raw
-    message lists). Bot1 session files are NOT byte-compatible but filenames are preserved.
-    Swap to SqliteDb/PostgresDb at construction."""
+    """Single-JSON-per-session storage. Each session is one file: sessions/{user_id}_{session_id}.jsonl.
+
+    Storage model: upsert OVERWRITES the file (one JSON line = current AgentSession state).
+    The .jsonl extension preserves filename convention from bot1. NOT append-only.
+    Bot1 session content is NOT compatible (different schema); only filenames match.
+    Swap to SqliteDb/PostgresDb at construction — one line in main.py."""
 
     def __init__(self, sessions_dir: str = "./sessions"):
         self.sessions_dir = sessions_dir
@@ -661,15 +695,24 @@ class JsonlAgentDb(BaseDb):
 
     def _find_path(self, session_id: str) -> Optional[str]:
         """Locate the file for session_id regardless of user_id prefix.
-        Uses exact suffix match to avoid session ID collision (e.g. 's1' matching 'long-s1')."""
-        suffix = f"_{session_id}.jsonl"
+
+        Reads JSON content rather than parsing filenames to avoid ambiguity when
+        user_id or session_id contains underscores. O(n) over session files — fine
+        for a CLI bot with few sessions.
+        """
         for fname in os.listdir(self.sessions_dir):
-            # Split on '_' and compare the session_id part exactly
-            if fname == f"anonymous_{session_id}.jsonl":
-                return os.path.join(self.sessions_dir, fname)
-            parts = fname.rsplit("_", 1)
-            if len(parts) == 2 and parts[1] == f"{session_id}.jsonl":
-                return os.path.join(self.sessions_dir, fname)
+            if not fname.endswith(".jsonl"):
+                continue
+            path = os.path.join(self.sessions_dir, fname)
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    line = f.readline().strip()
+                if line:
+                    data = json.loads(line)
+                    if data.get("session_id") == session_id:
+                        return path
+            except Exception:
+                continue
         return None
 
     def read(self, session_id: str, user_id: Optional[str] = None) -> Optional[AgentSession]:
@@ -679,11 +722,10 @@ class JsonlAgentDb(BaseDb):
         if not path or not os.path.exists(path):
             return None
         with open(path, "r", encoding="utf-8") as f:
-            lines = [json.loads(l) for l in f if l.strip()]
-        if not lines:
+            line = f.readline().strip()
+        if not line:
             return None
-        data = lines[-1]  # last line is the authoritative state
-        return AgentSession(**data)
+        return AgentSession(**json.loads(line))  # single-JSON-per-file model
 
     def upsert(self, session: AgentSession) -> Optional[AgentSession]:
         path = self._path(session.session_id, session.user_id)
@@ -707,7 +749,7 @@ class JsonlAgentDb(BaseDb):
                     lines = [json.loads(l) for l in f if l.strip()]
                 if not lines:
                     continue
-                session = AgentSession(**lines[-1])
+                session = AgentSession(**json.loads(lines[0]))
                 if user_id is None or session.user_id == user_id:
                     results.append(session)
             except Exception:
@@ -778,6 +820,14 @@ For example:
 - If output shows nothing (MemoryTools uses a different pattern) → check if `db=` is passed directly to individual tool functions and trace the call path
 
 Note the exact names before proceeding.
+
+> **CRITICAL:** `MarkdownMemoryDb` does **NOT** extend `BaseDb`. `MemoryTools.db` is a
+> different protocol from session storage. The adapter method names `upsert_memory` and
+> `search_memories` used in the implementation template below are **placeholder guesses**.
+> They WILL likely be wrong. If you skip this inspection and use the guesses, memory will
+> silently not work — `MemoryTools` will initialize without error but calls will never reach
+> `MarkdownMemoryDb`. Update the implementation below to match the actual method names
+> before writing a single line of code.
 
 - [ ] **Step 2: Write the failing tests**
 
@@ -1006,15 +1056,18 @@ class TestRunCommand:
         assert isinstance(result, str)
         assert len(result) > 0
 
-    def test_previously_approved_command_skips_prompt(self, toolkit, tmp_path, monkeypatch):
-        approvals = {"allowed": ["date"], "denied": []}
+    def test_previously_approved_command_skips_prompt(self, tmp_path):
+        # Use 'pwd' — not in SAFE_COMMANDS, so requires approval.
+        # Pre-approve it in the approvals file; must not prompt for input.
+        approvals = {"allowed": ["pwd"], "denied": []}
         approvals_file = str(tmp_path / "approvals.json")
         with open(approvals_file, "w") as f:
             json.dump(approvals, f)
         tk = BotToolkit(approvals_file=approvals_file)
-        # No monkeypatch of input — should not prompt
-        result = tk.run_command("date")
+        # No monkeypatch of input — if this prompts, the test hangs (not passes silently)
+        result = tk.run_command("pwd")
         assert isinstance(result, str)
+        assert len(result) > 0
 
 
 class TestReadFile:
@@ -1187,11 +1240,15 @@ class BotToolkit(Toolkit):
             content: Content to write.
 
         Returns:
-            Confirmation message.
+            Confirmation message, or an error string if write failed.
         """
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(content)
-        return f"Wrote to {path}"
+        try:
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+            return f"Wrote to {path}"
+        except Exception as e:
+            return f"Error writing {path}: {e}"
 
     def web_search(self, query: str) -> str:
         """Search the web for information.
@@ -1281,11 +1338,14 @@ os.makedirs(SESSIONS_DIR, exist_ok=True)
 os.makedirs(MEMORY_DIR, exist_ok=True)
 
 
+APPROVALS_FILE = os.path.join(_HERE, "workspace", "exec-approvals.json")
+
+
 def build_agent() -> Agent:
     return Agent(
-        model=Claude(id="claude-sonnet-4-6"),
+        model=Claude(id="claude-sonnet-4-6", cache_system_prompt=True),  # cache large prompt
         tools=[
-            BotToolkit(),
+            BotToolkit(approvals_file=APPROVALS_FILE),   # absolute path, consistent with other dirs
             MemoryTools(db=MarkdownMemoryDb(MEMORY_DIR)),
         ],
         db=JsonlAgentDb(sessions_dir=SESSIONS_DIR),
@@ -1297,11 +1357,16 @@ def build_agent() -> Agent:
 
 
 def main():
-    user_id = input("Enter your user ID: ").strip() or "default"
-    session_id = (
-        input("Enter your session ID: ").strip()
-        or datetime.now().strftime("%Y%m%d%H%M%S")
-    )
+    try:
+        user_id = input("Enter your user ID: ").strip() or "default"
+        session_id = (
+            input("Enter your session ID: ").strip()
+            or datetime.now().strftime("%Y%m%d%H%M%S")
+        )
+    except EOFError:
+        print("No TTY detected. Exiting.")
+        return
+
     print(
         f"Session loaded for user '{user_id}', session '{session_id}'. "
         "Type /quit or /exit to quit. Type /new to reset the session."
@@ -1310,7 +1375,11 @@ def main():
     agent = build_agent()
 
     while True:
-        text = input("You: ")
+        try:
+            text = input("You: ")
+        except (EOFError, KeyboardInterrupt):
+            print("\nGoodbye!")
+            break
         if text in ["/quit", "/exit"]:
             print("Goodbye!")
             break
@@ -1318,8 +1387,14 @@ def main():
             session_id = datetime.now().strftime("%Y%m%d%H%M%S")
             print(f"Session reset. New session ID: {session_id}")
             continue
-        response = agent.run(text, user_id=user_id, session_id=session_id)
-        print(f"Claude: {response.content or ''}")
+        try:
+            response = agent.run(text, user_id=user_id, session_id=session_id)
+            print(f"Claude: {response.content or ''}")
+        except KeyboardInterrupt:
+            print("\nGoodbye!")
+            break
+        except Exception as e:
+            print(f"Error: {e}")
 
 
 if __name__ == "__main__":
@@ -1371,7 +1446,9 @@ Expected: All existing bot1 tests still pass.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add bot2/main.py bot2/workspace bot2/sessions bot2/memory bot2/.env
+# Do NOT add bot2/.env — it's git-ignored and contains secrets
+# Do NOT add bot2/sessions/ or bot2/memory/ — runtime artifacts, git-ignored
+git add bot2/main.py bot2/workspace
 git commit -m "feat(bot2): wire main.py — Agno migration complete"
 ```
 
@@ -1404,6 +1481,8 @@ Expected: Bot responds, session file appears in `bot2/sessions/`.
 - [ ] **Final commit**
 
 ```bash
-git add -A
+# Verify .gitignore is working before final add
+git status  # sessions/, memory/, .env should NOT appear as untracked
+git add bot2/
 git commit -m "chore: bot2 Agno migration complete — all tests passing"
 ```

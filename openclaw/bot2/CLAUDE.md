@@ -64,7 +64,8 @@ class BaseDb:
 ```
 
 **bot2 uses `JsonlAgentDb`** — a custom `BaseDb` subclass backed by
-`sessions/{user_id}_{session_id}.jsonl` files, identical in layout to bot1.
+`sessions/{user_id}_{session_id}.jsonl` files. Filename convention matches bot1;
+internal content differs (stores `AgentSession` JSON, not raw message lists).
 Swap to `SqliteDb` or `PostgresDb` by replacing the one `db=` argument at startup:
 
 ```python
@@ -81,13 +82,15 @@ db=SqliteDb(db_file="./sessions/agent.db")
 ## Components
 
 ### 1. `JsonlAgentDb` (`storage.py`)
-Custom `BaseDb` subclass. Reads/writes JSONL session files at
-`sessions/{user_id}_{session_id}.jsonl`. Preserves full compatibility with
-bot1's session files.
+Custom `BaseDb` subclass. Reads/writes one-JSON-line-per-file at
+`sessions/{user_id}_{session_id}.jsonl`. Same filename convention as bot1;
+content schema differs (AgentSession vs raw message list).
 
 ### 2. `MarkdownMemoryDb` (`memory_db.py`)
-Custom `BaseDb` subclass for memory storage. Stores `memory/{key}.md` files.
-Implements keyword search. Passed as `MemoryTools(db=MarkdownMemoryDb(MEMORY_DIR))`.
+Duck-typed memory store — does **NOT** extend `BaseDb`. Stores `memory/{key}.md` files.
+Implements keyword search. Adapter methods must match what `MemoryTools` actually calls
+on `db` (inspect at implementation time — see pitfall #12). Passed as
+`MemoryTools(db=MarkdownMemoryDb(MEMORY_DIR))`.
 
 **Note:** `MarkdownMemoryDb` stores long-term memory (`memory/*.md`).
 This is separate from `workspace/memory/YYYY-MM-DD.md` daily logs, which are
@@ -134,7 +137,7 @@ Thin CLI entry point:
 | Schema inference | Manual via type hints + `:param:` docstrings | Native Agno (same source: type hints + Google-style docstrings) |
 | Agentic loop | Hand-rolled `run_agent_turn()` while-loop | `Agent.run()` built-in |
 | Message serialization | Custom `serialize_content()` | Handled by Agno |
-| Session storage | JSONL files (hand-rolled) | `JsonlAgentDb(BaseDb)` — same files |
+| Session storage | JSONL files (hand-rolled) | `JsonlAgentDb(BaseDb)` — same filenames, different content schema |
 | Memory | Plain `memory/*.md` + custom search | `MemoryTools` + `MarkdownMemoryDb` |
 | Context compaction | LLM summarization at ~100k tokens | `num_history_runs=20` + `max_tool_calls_from_history=5` (see pitfall #9) |
 | System prompt | Rebuilt on every message | Built once at agent init (workspace changes need restart) |
@@ -209,6 +212,45 @@ Thin CLI entry point:
 11. **Do not duplicate `save_memory`/`memory_search` in `BotToolkit`** — these are
     provided by `MemoryTools`. Duplicate tool names cause schema conflicts.
 
+12. **`MemoryTools.db` interface ≠ `BaseDb`** — `MemoryTools` consumes a different
+    protocol from agent session storage (`BaseDb`). Do NOT extend `BaseDb` for
+    `MarkdownMemoryDb`. Before writing `MarkdownMemoryDb`, inspect `MemoryTools`
+    source to find the exact method names it calls on `db` (see Task 5 Step 1 in
+    the implementation plan). The method names `upsert_memory` and `search_memories`
+    used in the plan are **placeholder guesses** — they will likely differ from what
+    Agno actually calls. Wrong adapter names cause silent failure: `MemoryTools`
+    initializes but never routes calls to `MarkdownMemoryDb`.
+
+13. **Flat module names are ambiguous with two bots in `pythonpath`** — Both `bot1`
+    and `bot2` have `main.py`. With `pythonpath = ["bot1", "bot2"]`, `import main`
+    resolves to `bot1/main.py` everywhere. Bot2 tests currently don't import `main`
+    directly, but the setup is fragile — any future test that does `import main` will
+    silently get the wrong module. Safer: use the project root as pythonpath and
+    qualify imports as `from bot2.storage import JsonlAgentDb`. This is a known
+    trade-off kept for simplicity; bot2 test modules use unique names (`storage.py`,
+    `memory_db.py`, `tools.py`, `prompt.py`) that don't exist in `bot1`.
+
+14. **`WORKSPACE_DIR = "./workspace"` is relative** — `prompt.py` resolves workspace
+    files relative to the Python process CWD. If the bot is launched from any
+    directory other than `bot2/`, workspace files silently fail to load (empty
+    context). Use `__file__`-relative resolution:
+    ```python
+    WORKSPACE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "workspace")
+    ```
+    `main.py` already uses this pattern for `SESSIONS_DIR` and `MEMORY_DIR`.
+
+15. **`_find_path` must not parse filenames** — Filename-based lookup
+    (`endswith(f"_{session_id}.jsonl")`) has a suffix-collision bug: looking for
+    session `"s1"` would match `"long_s1.jsonl"`. The correct implementation reads
+    the first JSON line of each file and compares `data["session_id"]` directly.
+    This is O(n) but correct and collision-free for any user_id/session_id values.
+
+16. **`.jsonl` extension is kept for filename convention only** — `JsonlAgentDb` uses
+    single-line overwrite semantics (not append-only JSONL). Each `upsert` call
+    overwrites the file with one JSON line. `read` reads that one line. The `.jsonl`
+    extension is retained purely to match bot1's filename convention. Do not add
+    append logic — if audit history is needed, switch to `SqliteDb`.
+
 ---
 
 ## Dependencies
@@ -234,7 +276,7 @@ bot2/
 ├── main.py                ← CLI entry point
 ├── prompt.py              ← build_system_prompt()
 ├── storage.py             ← JsonlAgentDb (BaseDb subclass)
-├── memory_db.py           ← MarkdownMemoryDb (BaseDb subclass)
+├── memory_db.py           ← MarkdownMemoryDb (duck-typed for MemoryTools)
 ├── tools.py               ← BotToolkit
 ├── sessions/              ← JSONL session files (same format as bot1)
 ├── memory/                ← long-term agent memory (*.md, keyed by save_memory calls)
