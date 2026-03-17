@@ -15,9 +15,9 @@ Agno is a Python framework for building multi-agent systems with shared memory, 
 - Built-in memory management (`MemoryTools`)
 - First-class support for Anthropic Claude models via `agno.models.anthropic.Claude`
 
-> **Version note:** This guide targets `agno>=0.5`. The `Agent` constructor uses `db=`
+> **Version note:** This guide targets `agno>=1.0,<3.0` (installed: 2.5.9). The `Agent` constructor uses `db=`
 > (not `storage=`) and the custom DB base class is `agno.db.base.BaseDb`.
-> Pin in `pyproject.toml`: `agno>=0.5`.
+> Pin in `pyproject.toml`: `agno>=1.0,<3.0`.
 
 ---
 
@@ -250,6 +250,11 @@ Thin CLI entry point:
     overwrites the file with one JSON line. `read` reads that one line. The `.jsonl`
     extension is retained purely to match bot1's filename convention. Do not add
     append logic — if audit history is needed, switch to `SqliteDb`.
+
+17. **`workspace/agents/` changes require a restart** — `load_agents_index()` is
+    called once at `build_system_prompt()` time (agent init). Adding, removing, or
+    renaming agent files takes effect only after restarting the bot. This is the
+    same constraint as workspace context files and skills.
 
 ---
 

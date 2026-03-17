@@ -21,6 +21,7 @@ from agno.agent import Agent
 from agno.models.anthropic import Claude
 from agno.tools.memory import MemoryTools
 
+from agents import AgentsToolkit
 from memory_db import MarkdownMemoryDb
 from prompt import build_system_prompt
 from storage import JsonlAgentDb
@@ -48,6 +49,7 @@ def build_agent() -> Agent:
         model=Claude(id='claude-sonnet-4-6', cache_system_prompt=True),
         tools=[
             BotToolkit(approvals_file=APPROVALS_FILE),
+            AgentsToolkit(),
             MemoryTools(db=MarkdownMemoryDb(MEMORY_DIR)),
         ],
         db=JsonlAgentDb(sessions_dir=SESSIONS_DIR),
