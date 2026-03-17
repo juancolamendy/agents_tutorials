@@ -3,6 +3,8 @@ import os
 import re
 from datetime import datetime, timedelta
 
+from agents import load_agents_index
+
 # Resolve relative to this file so the bot works from any working directory.
 # Do NOT use "./workspace" — it breaks when invoked from outside bot2/.
 WORKSPACE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "workspace")
@@ -119,5 +121,9 @@ def build_system_prompt() -> str:
     skills = load_skills_index()
     if skills:
         parts.append(f"## Skills\n\n{skills}")
+
+    agents_index = load_agents_index()
+    if agents_index:
+        parts.append(f"## Agents\n\n{agents_index}")
 
     return "\n\n".join(parts)

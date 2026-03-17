@@ -2,6 +2,7 @@ import os
 from datetime import datetime, timedelta
 
 import prompt  # bot2/prompt.py
+import agents as agents_module
 
 
 class TestParseSkillFrontmatter:
@@ -215,3 +216,59 @@ class TestBuildSystemPrompt:
         result = prompt.build_system_prompt()
         assert "## Skills" in result
         assert "github" in result
+
+
+class TestBuildSystemPromptAgents:
+    """Verify ## Agents section in build_system_prompt()."""
+
+    def _setup(self, tmp_path, monkeypatch):
+        """Patch both WORKSPACE_DIRs and reset registry — required because
+        build_system_prompt() calls load_agents_index() which reads agents.WORKSPACE_DIR,
+        not prompt.WORKSPACE_DIR."""
+        monkeypatch.setattr(prompt, "WORKSPACE_DIR", str(tmp_path))
+        monkeypatch.setattr(agents_module, "WORKSPACE_DIR", str(tmp_path))
+        monkeypatch.setattr(agents_module, "_agents_registry", {})
+
+    def _make_skill(self, tmp_path):
+        """Create a minimal skill so ## Skills is present in output."""
+        skill_dir = tmp_path / "skills" / "test_skill"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: test-skill\ndescription: A test skill.\n---\nBody.",
+            encoding="utf-8",
+        )
+
+    def _make_agent(self, tmp_path, name="test-agent"):
+        agents_dir = tmp_path / "agents" / "test_agent"
+        agents_dir.mkdir(parents=True)
+        (agents_dir / "test_agent.md").write_text(
+            f"---\nname: {name}\ndescription: A test agent.\n---\nYou are a specialist.",
+            encoding="utf-8",
+        )
+
+    def test_agents_section_present_when_agents_dir_has_agents(self, tmp_path, monkeypatch):
+        self._setup(tmp_path, monkeypatch)
+        self._make_agent(tmp_path)
+        result = prompt.build_system_prompt()
+        assert "## Agents" in result
+
+    def test_agents_section_absent_when_agents_dir_missing(self, tmp_path, monkeypatch):
+        self._setup(tmp_path, monkeypatch)
+        # No agents dir at all
+        result = prompt.build_system_prompt()
+        assert "## Agents" not in result
+
+    def test_agents_section_absent_when_agents_dir_empty(self, tmp_path, monkeypatch):
+        self._setup(tmp_path, monkeypatch)
+        (tmp_path / "agents").mkdir()
+        result = prompt.build_system_prompt()
+        assert "## Agents" not in result
+
+    def test_agents_section_after_skills_section(self, tmp_path, monkeypatch):
+        self._setup(tmp_path, monkeypatch)
+        self._make_skill(tmp_path)
+        self._make_agent(tmp_path)
+        result = prompt.build_system_prompt()
+        assert "## Skills" in result
+        assert "## Agents" in result
+        assert result.index("## Skills") < result.index("## Agents")
