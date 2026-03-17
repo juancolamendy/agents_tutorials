@@ -3,6 +3,8 @@
 Tests for extract_frontmatter_body, load_agents_index, and AgentsToolkit.
 """
 
+import shutil
+
 import pytest
 import agents
 import agents as agents_module  # alias used by TestLoadAgentsIndex* and TestRunAgent*
@@ -188,7 +190,6 @@ class TestLoadAgentsIndexEdgeCases:
         assert "my-agent" in agents_module._agents_registry
 
         # Remove the agent and call again
-        import shutil
         shutil.rmtree(str(agent_dir))
         agents_module.load_agents_index()
         assert "my-agent" not in agents_module._agents_registry
