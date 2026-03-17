@@ -4,6 +4,7 @@ Tests for extract_frontmatter_body, load_agents_index, and AgentsToolkit.
 """
 
 import shutil
+from unittest.mock import MagicMock, patch
 
 import pytest
 from agno.tools import Toolkit
@@ -224,9 +225,6 @@ class TestAgentsToolkitRegistration:
         from agents import AgentsToolkit
         toolkit = AgentsToolkit()
         assert list(toolkit.functions.keys()) == ["run_agent"]
-
-
-from unittest.mock import MagicMock, patch
 
 
 def _make_fake_ctx(session_state=None):
