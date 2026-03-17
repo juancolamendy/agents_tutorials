@@ -224,3 +224,72 @@ class TestAgentsToolkitRegistration:
         from agents import AgentsToolkit
         toolkit = AgentsToolkit()
         assert list(toolkit.functions.keys()) == ["run_agent"]
+
+
+from unittest.mock import MagicMock, patch
+
+
+def _make_fake_ctx(session_state=None):
+    """Create a minimal fake RunContext — avoids dependency on RunContext constructor API."""
+    ctx = MagicMock()
+    ctx.session_state = session_state
+    return ctx
+
+
+class TestRunAgentErrors:
+
+    def test_agent_not_found_returns_error_string(self, monkeypatch):
+        monkeypatch.setattr(agents_module, "_agents_registry", {})
+        toolkit = agents_module.AgentsToolkit()
+        result = toolkit.run_agent(_make_fake_ctx(), "nonexistent-agent", "do something")
+        assert "nonexistent-agent" in result
+        assert result.startswith("Error")
+
+    def test_agent_not_found_does_not_raise(self, monkeypatch):
+        monkeypatch.setattr(agents_module, "_agents_registry", {})
+        toolkit = agents_module.AgentsToolkit()
+        # Must return a string, never raise
+        result = toolkit.run_agent(_make_fake_ctx(), "ghost", "task")
+        assert isinstance(result, str)
+
+    def test_unreadable_agent_file_returns_error_string(self, tmp_path, monkeypatch):
+        bad_path = str(tmp_path / "nonexistent.md")
+        monkeypatch.setattr(
+            agents_module,
+            "_agents_registry",
+            {"my-agent": {"file_path": bad_path, "model": None}},
+        )
+        toolkit = agents_module.AgentsToolkit()
+        result = toolkit.run_agent(_make_fake_ctx(), "my-agent", "task")
+        assert "my-agent" in result
+        assert result.startswith("Error")
+
+    def test_api_exception_returns_error_string(self, tmp_path, monkeypatch):
+        # Create a real (readable) agent file
+        agent_file = tmp_path / "agent.md"
+        agent_file.write_text("---\nname: my-agent\n---\n\nDo stuff.", encoding="utf-8")
+        monkeypatch.setattr(
+            agents_module,
+            "_agents_registry",
+            {"my-agent": {"file_path": str(agent_file), "model": None}},
+        )
+        toolkit = agents_module.AgentsToolkit()
+        with patch("agents.Agent") as MockAgent:
+            MockAgent.return_value.run.side_effect = RuntimeError("API down")
+            result = toolkit.run_agent(_make_fake_ctx(), "my-agent", "task")
+        assert "my-agent" in result
+        assert result.startswith("Error")
+
+    def test_none_response_content_returns_empty_string(self, tmp_path, monkeypatch):
+        agent_file = tmp_path / "agent.md"
+        agent_file.write_text("---\nname: my-agent\n---\n\nDo stuff.", encoding="utf-8")
+        monkeypatch.setattr(
+            agents_module,
+            "_agents_registry",
+            {"my-agent": {"file_path": str(agent_file), "model": None}},
+        )
+        toolkit = agents_module.AgentsToolkit()
+        with patch("agents.Agent") as MockAgent:
+            MockAgent.return_value.run.return_value = MagicMock(content=None)
+            result = toolkit.run_agent(_make_fake_ctx(), "my-agent", "task")
+        assert result == ""

@@ -127,5 +127,25 @@ class AgentsToolkit(Toolkit):
         Note:
             run_context is injected automatically by Agno — do not pass it manually.
         """
-        # Implementation added in Phase 7 and 8
-        raise NotImplementedError
+        try:
+            entry = _agents_registry.get(agent_name)
+            if entry is None:
+                return f"Error: agent '{agent_name}' not found."
+
+            with open(entry["file_path"], "r", encoding="utf-8") as f:
+                content = f.read()
+
+            body = extract_frontmatter_body(content)
+            model = entry["model"] or "claude-sonnet-4-6"
+
+            sub_agent = Agent(
+                model=Claude(id=model),
+                system_message=body,
+                # no db, no tools, no session_id — ephemeral one-shot agent
+            )
+
+            resp = sub_agent.run(task, session_state=run_context.session_state)
+            return resp.content or ""
+
+        except Exception as e:
+            return f"Error running agent '{agent_name}': {e}"
