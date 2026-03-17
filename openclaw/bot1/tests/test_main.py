@@ -403,3 +403,32 @@ class TestRunAgentTurn:
             )
         assert result is not None
         assert isinstance(result, tuple)
+
+
+class TestExtractFrontmatterBody:
+
+    def test_returns_body_when_frontmatter_present(self):
+        content = "---\nname: foo\n---\n\n## Role\nYou are an agent."
+        result = main.extract_frontmatter_body(content)
+        assert result == "## Role\nYou are an agent."
+
+    def test_returns_full_content_when_no_frontmatter(self):
+        content = "## Role\nYou are an agent."
+        result = main.extract_frontmatter_body(content)
+        assert result == "## Role\nYou are an agent."
+
+    def test_body_with_horizontal_rule_not_split(self):
+        content = "---\nname: foo\n---\n\n## Section\n\n---\n\nMore content"
+        result = main.extract_frontmatter_body(content)
+        assert "---" in result
+        assert "More content" in result
+
+    def test_strips_leading_trailing_whitespace_from_body(self):
+        content = "---\nname: foo\n---\n\n\n  body content  \n\n"
+        result = main.extract_frontmatter_body(content)
+        assert result == "body content"
+
+    def test_mid_line_dashes_not_treated_as_delimiter(self):
+        content = "---\nname: foo\n---\nSome --- inline dashes"
+        result = main.extract_frontmatter_body(content)
+        assert result == "Some --- inline dashes"

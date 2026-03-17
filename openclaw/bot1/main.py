@@ -80,6 +80,18 @@ def parse_skill_frontmatter(content: str) -> dict:
         meta[key.strip()] = value.strip()
     return meta
 
+def extract_frontmatter_body(content: str) -> str:
+    """Return the body of a markdown file after stripping YAML frontmatter.
+
+    Uses the same multiline regex as parse_skill_frontmatter so that
+    '---' appearing mid-line or inside paragraphs is not treated as a
+    delimiter. Returns the full content stripped if no frontmatter is found.
+    """
+    parts = re.split(r"^---\s*$", content, maxsplit=2, flags=re.MULTILINE)
+    if len(parts) == 3:
+        return parts[2].strip()
+    return content.strip()
+
 def load_context_files() -> dict:
     """Load workspace context markdown files.
 
