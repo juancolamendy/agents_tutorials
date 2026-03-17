@@ -66,3 +66,76 @@ class TestLoadAgentsIndexMissingDir:
         agent_dir.mkdir(parents=True)
         # No my_agent.md inside the dir
         assert agents_module.load_agents_index() == ""
+
+
+def _make_agent_file(agents_dir, dir_name, frontmatter: dict, body: str = "Do the task."):
+    """Helper: create workspace/agents/<dir_name>/<dir_name>.md."""
+    agent_dir = agents_dir / dir_name
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    lines = ["---"]
+    for k, v in frontmatter.items():
+        lines.append(f"{k}: {v}")
+    lines += ["---", "", body]
+    (agent_dir / f"{dir_name}.md").write_text("\n".join(lines), encoding="utf-8")
+    return agent_dir
+
+
+class TestLoadAgentsIndexValid:
+
+    def test_valid_agent_appears_in_xml(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(agents_module, "WORKSPACE_DIR", str(tmp_path))
+        agents_dir = tmp_path / "agents"
+        _make_agent_file(
+            agents_dir, "summarizer_agent",
+            {"name": "summarizer-agent", "description": "Summarize text."}
+        )
+        result = agents_module.load_agents_index()
+        assert "<name>summarizer-agent</name>" in result
+        assert "<description>Summarize text.</description>" in result
+        assert "summarizer_agent.md" in result
+        assert "<directory>" in result
+
+    def test_instructional_preamble_present(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(agents_module, "WORKSPACE_DIR", str(tmp_path))
+        agents_dir = tmp_path / "agents"
+        _make_agent_file(
+            agents_dir, "summarizer_agent",
+            {"name": "summarizer-agent", "description": "Summarize text."}
+        )
+        result = agents_module.load_agents_index()
+        assert "run_agent" in result
+        assert result.index("run_agent") < result.index("<available_agents>")
+
+    def test_registry_populated_with_file_path_and_model(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(agents_module, "WORKSPACE_DIR", str(tmp_path))
+        agents_dir = tmp_path / "agents"
+        agent_dir = _make_agent_file(
+            agents_dir, "summarizer_agent",
+            {"name": "summarizer-agent", "description": "Summarize.", "model": "claude-haiku-4-5-20251001"}
+        )
+        agents_module.load_agents_index()
+        entry = agents_module._agents_registry["summarizer-agent"]
+        assert entry["file_path"].endswith("summarizer_agent.md")
+        assert entry["model"] == "claude-haiku-4-5-20251001"
+
+    def test_model_absent_stored_as_none(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(agents_module, "WORKSPACE_DIR", str(tmp_path))
+        agents_dir = tmp_path / "agents"
+        _make_agent_file(
+            agents_dir, "summarizer_agent",
+            {"name": "summarizer-agent", "description": "Summarize."}
+            # no model field
+        )
+        agents_module.load_agents_index()
+        assert agents_module._agents_registry["summarizer-agent"]["model"] is None
+
+    def test_agent_without_name_field_is_skipped(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(agents_module, "WORKSPACE_DIR", str(tmp_path))
+        agents_dir = tmp_path / "agents"
+        _make_agent_file(
+            agents_dir, "nameless_agent",
+            {"description": "Has no name field."}
+        )
+        result = agents_module.load_agents_index()
+        assert result == ""
+        assert agents_module._agents_registry == {}
