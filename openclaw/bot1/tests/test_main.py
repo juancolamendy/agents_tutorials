@@ -328,6 +328,50 @@ class TestBuildSystemPrompt:
         # Just verify no section for the tool memory dir leaks in
         assert "user-preferences" not in result
 
+    def test_agents_section_included_when_present(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        monkeypatch.setattr(main, "_agents_registry", {})
+        d = tmp_path / "agents" / "my_agent"
+        d.mkdir(parents=True)
+        (d / "my_agent.md").write_text(
+            "---\nname: my-agent\ndescription: does stuff.\n---\nbody",
+            encoding="utf-8",
+        )
+        result = main.build_system_prompt()
+        assert "## Agents" in result
+        assert "my-agent" in result
+
+    def test_agents_section_absent_when_no_agents(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        monkeypatch.setattr(main, "_agents_registry", {})
+        result = main.build_system_prompt()
+        assert "## Agents" not in result
+
+    def test_agents_section_between_skills_and_memory_instructions(self, tmp_path, monkeypatch):
+        """Three-way ordering: ## Skills < ## Agents < ## Memory Instructions."""
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        monkeypatch.setattr(main, "_agents_registry", {})
+        # Create a skill
+        skill_dir = tmp_path / "skills" / "myskill"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text("---\nname: myskill\n---", encoding="utf-8")
+        # Create an agent
+        agent_dir = tmp_path / "agents" / "my_agent"
+        agent_dir.mkdir(parents=True)
+        (agent_dir / "my_agent.md").write_text(
+            "---\nname: my-agent\ndescription: desc.\n---\nbody",
+            encoding="utf-8",
+        )
+        result = main.build_system_prompt()
+        assert "## Skills" in result
+        assert "## Agents" in result
+        assert "## Memory Instructions" in result
+        skills_pos = result.index("## Skills")
+        agents_pos = result.index("## Agents")
+        memory_pos = result.index("## Memory Instructions")
+        assert skills_pos < agents_pos
+        assert agents_pos < memory_pos
+
 
 class TestToolReadFile:
 

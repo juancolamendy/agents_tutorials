@@ -59,7 +59,12 @@ def build_system_prompt() -> str:
     if skills:
         parts.append(f"## Skills\n\n{skills}")
 
-    # 9. Memory tool instructions (always present)
+    # 9. Agents index
+    agents = load_agents_index()
+    if agents:
+        parts.append(f"## Agents\n\n{agents}")
+
+    # 10. Memory tool instructions (always present)
     parts.append(build_memory_prompt())
 
     return "\n\n".join(parts)
