@@ -293,3 +293,78 @@ class TestRunAgentErrors:
             MockAgent.return_value.run.return_value = MagicMock(content=None)
             result = toolkit.run_agent(_make_fake_ctx(), "my-agent", "task")
         assert result == ""
+
+
+class TestRunAgentHappyPath:
+
+    def _setup_agent(self, tmp_path, monkeypatch, model=None):
+        agent_file = tmp_path / "agent.md"
+        agent_file.write_text(
+            "---\nname: my-agent\n---\n\nYou are a specialist.",
+            encoding="utf-8",
+        )
+        registry_entry = {"file_path": str(agent_file), "model": model}
+        monkeypatch.setattr(
+            agents_module,
+            "_agents_registry",
+            {"my-agent": registry_entry},
+        )
+        return registry_entry
+
+    def test_successful_call_returns_response_content(self, tmp_path, monkeypatch):
+        self._setup_agent(tmp_path, monkeypatch)
+        toolkit = agents_module.AgentsToolkit()
+        with patch("agents.Agent") as MockAgent:
+            MockAgent.return_value.run.return_value = MagicMock(content="summary result")
+            result = toolkit.run_agent(_make_fake_ctx(), "my-agent", "summarize this")
+        assert result == "summary result"
+
+    def test_session_state_passed_to_sub_agent(self, tmp_path, monkeypatch):
+        self._setup_agent(tmp_path, monkeypatch)
+        state = {"user": "alice", "pref": "brief"}
+        ctx = _make_fake_ctx(session_state=state)
+        toolkit = agents_module.AgentsToolkit()
+        with patch("agents.Agent") as MockAgent:
+            MockAgent.return_value.run.return_value = MagicMock(content="ok")
+            toolkit.run_agent(ctx, "my-agent", "task")
+            call_kwargs = MockAgent.return_value.run.call_args
+        # run_agent uses sub_agent.run(task, session_state=...) — keyword arg only
+        assert call_kwargs.kwargs["session_state"] == state
+
+    def test_none_session_state_passed_as_none(self, tmp_path, monkeypatch):
+        self._setup_agent(tmp_path, monkeypatch)
+        ctx = _make_fake_ctx(session_state=None)
+        toolkit = agents_module.AgentsToolkit()
+        with patch("agents.Agent") as MockAgent:
+            MockAgent.return_value.run.return_value = MagicMock(content="ok")
+            toolkit.run_agent(ctx, "my-agent", "task")
+            call_kwargs = MockAgent.return_value.run.call_args
+        # session_state=None must be an explicit keyword arg — not silently omitted
+        assert "session_state" in call_kwargs.kwargs
+        assert call_kwargs.kwargs["session_state"] is None
+
+    def test_model_absent_defaults_to_sonnet(self, tmp_path, monkeypatch):
+        self._setup_agent(tmp_path, monkeypatch, model=None)
+        toolkit = agents_module.AgentsToolkit()
+        with patch("agents.Agent") as MockAgent, patch("agents.Claude") as MockClaude:
+            MockAgent.return_value.run.return_value = MagicMock(content="ok")
+            toolkit.run_agent(_make_fake_ctx(), "my-agent", "task")
+            MockClaude.assert_called_once_with(id="claude-sonnet-4-6")
+
+    def test_explicit_model_used_when_present(self, tmp_path, monkeypatch):
+        self._setup_agent(tmp_path, monkeypatch, model="claude-haiku-4-5-20251001")
+        toolkit = agents_module.AgentsToolkit()
+        with patch("agents.Agent") as MockAgent, patch("agents.Claude") as MockClaude:
+            MockAgent.return_value.run.return_value = MagicMock(content="ok")
+            toolkit.run_agent(_make_fake_ctx(), "my-agent", "task")
+            MockClaude.assert_called_once_with(id="claude-haiku-4-5-20251001")
+
+    def test_sub_agent_instantiated_without_db_or_tools(self, tmp_path, monkeypatch):
+        self._setup_agent(tmp_path, monkeypatch)
+        toolkit = agents_module.AgentsToolkit()
+        with patch("agents.Agent") as MockAgent:
+            MockAgent.return_value.run.return_value = MagicMock(content="ok")
+            toolkit.run_agent(_make_fake_ctx(), "my-agent", "task")
+            call_kwargs = MockAgent.call_args.kwargs
+        assert "db" not in call_kwargs
+        assert "tools" not in call_kwargs
