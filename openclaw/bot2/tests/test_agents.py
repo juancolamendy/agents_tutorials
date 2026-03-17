@@ -139,3 +139,69 @@ class TestLoadAgentsIndexValid:
         result = agents_module.load_agents_index()
         assert result == ""
         assert agents_module._agents_registry == {}
+
+
+class TestLoadAgentsIndexEdgeCases:
+
+    def test_xml_special_chars_in_description_are_html_escaped(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(agents_module, "WORKSPACE_DIR", str(tmp_path))
+        agents_dir = tmp_path / "agents"
+        _make_agent_file(
+            agents_dir, "my_agent",
+            {"name": "my-agent", "description": "Load <data> & save"}
+        )
+        result = agents_module.load_agents_index()
+        assert "<data>" not in result
+        assert "&lt;data&gt;" in result
+        assert "&amp;" in result
+
+    def test_multiple_agents_sorted_alphabetically(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(agents_module, "WORKSPACE_DIR", str(tmp_path))
+        agents_dir = tmp_path / "agents"
+        for dir_name, name in [
+            ("weather_agent", "weather-agent"),
+            ("alpha_agent", "alpha-agent"),
+            ("beta_agent", "beta-agent"),
+        ]:
+            _make_agent_file(agents_dir, dir_name, {"name": name, "description": "desc"})
+        result = agents_module.load_agents_index()
+        assert result.index("alpha-agent") < result.index("beta-agent") < result.index("weather-agent")
+
+    def test_duplicate_name_last_alphabetical_dir_wins(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(agents_module, "WORKSPACE_DIR", str(tmp_path))
+        agents_dir = tmp_path / "agents"
+        # Both dirs declare name "dup" — "z_agent" comes after "a_agent" alphabetically
+        _make_agent_file(agents_dir, "a_agent", {"name": "dup", "description": "first"})
+        _make_agent_file(agents_dir, "z_agent", {"name": "dup", "description": "second"})
+        agents_module.load_agents_index()
+        entry = agents_module._agents_registry["dup"]
+        assert "z_agent" in entry["file_path"]
+
+    def test_stale_registry_entry_cleared_on_second_call(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(agents_module, "WORKSPACE_DIR", str(tmp_path))
+        agents_dir = tmp_path / "agents"
+        agent_dir = _make_agent_file(
+            agents_dir, "my_agent",
+            {"name": "my-agent", "description": "desc"}
+        )
+        agents_module.load_agents_index()
+        assert "my-agent" in agents_module._agents_registry
+
+        # Remove the agent and call again
+        import shutil
+        shutil.rmtree(str(agent_dir))
+        agents_module.load_agents_index()
+        assert "my-agent" not in agents_module._agents_registry
+
+    def test_registry_matches_expected_keys_and_structure(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(agents_module, "WORKSPACE_DIR", str(tmp_path))
+        agents_dir = tmp_path / "agents"
+        _make_agent_file(
+            agents_dir, "my_agent",
+            {"name": "my-agent", "description": "desc", "model": "claude-opus-4-6"}
+        )
+        agents_module.load_agents_index()
+        registry = agents_module._agents_registry
+        assert set(registry.keys()) == {"my-agent"}
+        assert set(registry["my-agent"].keys()) == {"file_path", "model"}
+        assert registry["my-agent"]["model"] == "claude-opus-4-6"
