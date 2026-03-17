@@ -398,6 +398,43 @@ def tool_memory_search(query: str) -> str:
                 results.append(f"--- {fname} ---\n{content}")
     return "\n\n".join(results) if results else "No matching memories found."
 
+def _make_tool_run_agent(user_id: str, session_id: str):
+    """Factory that returns a run_agent closure bound to a specific session."""
+    def run_agent(agent_name: str, input: str) -> str:
+        """Dispatch a task to a specialized sub-agent and return its response.
+        :param agent_name: Name of the agent as listed in the agents index.
+        :param input: The task or question to send to the agent.
+        """
+        entry = _agents_registry.get(agent_name)
+        if entry is None:
+            return f"Error: agent '{agent_name}' not found."
+
+        try:
+            with open(entry["file_path"], "r", encoding="utf-8") as f:
+                content = f.read()
+        except Exception as e:
+            return f"Error running agent '{agent_name}': {e}"
+
+        body = extract_frontmatter_body(content)
+        model = entry["model"] or "claude-sonnet-4-6"
+        messages = load_session(user_id, session_id)
+        messages = messages + [{"role": "user", "content": input}]
+
+        try:
+            # No tools= passed — sub-agent is stateless, prevents recursion
+            response = client.messages.create(
+                model=model,
+                max_tokens=4096,
+                system=body,
+                messages=messages,
+            )
+            return response.content[0].text
+        except Exception as e:
+            return f"Error running agent '{agent_name}': {e}"
+
+    return run_agent
+
+
 registry = ToolRegistry()
 registry.register("run_command", tool_run_command)
 registry.register("read_file", tool_read_file)
@@ -537,6 +574,7 @@ async def handle_message(user_id: str, session_id: str, text: str):
     messages.append({"role": "user", "content": text})
 
     system_prompt = build_system_prompt()
+    registry.register("run_agent", _make_tool_run_agent(user_id, session_id))
     response_text, messages = run_agent_turn(messages, system_prompt)
 
     save_session(user_id, session_id, messages)

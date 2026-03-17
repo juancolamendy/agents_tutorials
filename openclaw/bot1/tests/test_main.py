@@ -593,3 +593,123 @@ class TestLoadAgentsIndex:
         d.rmdir()
         main.load_agents_index()
         assert "my-agent" not in main._agents_registry
+
+
+class TestToolRunAgent:
+
+    @pytest.fixture(autouse=True)
+    def reset_registry(self, monkeypatch):
+        monkeypatch.setattr(main, "_agents_registry", {})
+
+    def _make_fn(self, tmp_path):
+        """Return a run_agent closure bound to an empty session."""
+        return main._make_tool_run_agent(str(tmp_path), "test-session")
+
+    def test_agent_not_found_returns_error_string(self, tmp_path):
+        fn = self._make_fn(tmp_path)
+        result = fn("nonexistent-agent", "hello")
+        assert "Error" in result
+        assert "nonexistent-agent" in result
+
+    def test_agent_not_found_does_not_raise(self, tmp_path):
+        fn = self._make_fn(tmp_path)
+        result = fn("nonexistent-agent", "hello")
+        assert isinstance(result, str)
+
+    def test_unreadable_file_returns_error_string(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "_agents_registry", {
+            "my-agent": {"file_path": "/nonexistent/path.md", "model": None}
+        })
+        fn = self._make_fn(tmp_path)
+        result = fn("my-agent", "hello")
+        assert "Error" in result
+        assert "my-agent" in result
+
+    def test_api_exception_returns_error_string(self, tmp_path, monkeypatch):
+        agent_file = tmp_path / "agent.md"
+        agent_file.write_text("---\nname: my-agent\n---\n\nYou are an agent.", encoding="utf-8")
+        monkeypatch.setattr(main, "_agents_registry", {
+            "my-agent": {"file_path": str(agent_file), "model": None}
+        })
+        with patch.object(main.client.messages, "create", side_effect=Exception("API down")):
+            fn = self._make_fn(tmp_path)
+            result = fn("my-agent", "hello")
+        assert "Error" in result
+        assert "my-agent" in result
+
+    def test_successful_call_returns_response_text(self, tmp_path, monkeypatch):
+        agent_file = tmp_path / "agent.md"
+        agent_file.write_text("---\nname: my-agent\n---\n\nYou are an agent.", encoding="utf-8")
+        monkeypatch.setattr(main, "_agents_registry", {
+            "my-agent": {"file_path": str(agent_file), "model": "claude-sonnet-4-6"}
+        })
+        mock_response = MagicMock()
+        mock_response.content = [_FakeTextBlock("summarized result")]
+        with patch.object(main.client.messages, "create", return_value=mock_response):
+            fn = self._make_fn(tmp_path)
+            result = fn("my-agent", "summarize this")
+        assert result == "summarized result"
+
+    def test_empty_session_appends_only_input(self, tmp_path, monkeypatch):
+        agent_file = tmp_path / "agent.md"
+        agent_file.write_text("---\nname: my-agent\n---\n\nYou are an agent.", encoding="utf-8")
+        monkeypatch.setattr(main, "_agents_registry", {
+            "my-agent": {"file_path": str(agent_file), "model": None}
+        })
+        mock_response = MagicMock()
+        mock_response.content = [_FakeTextBlock("ok")]
+        captured = {}
+        def capture_create(**kwargs):
+            captured["messages"] = kwargs["messages"]
+            return mock_response
+        with patch.object(main.client.messages, "create", side_effect=capture_create):
+            fn = self._make_fn(tmp_path)
+            fn("my-agent", "my input")
+        assert captured["messages"] == [{"role": "user", "content": "my input"}]
+
+    def test_absent_model_uses_default(self, tmp_path, monkeypatch):
+        agent_file = tmp_path / "agent.md"
+        agent_file.write_text("---\nname: my-agent\n---\n\nYou are an agent.", encoding="utf-8")
+        monkeypatch.setattr(main, "_agents_registry", {
+            "my-agent": {"file_path": str(agent_file), "model": None}
+        })
+        mock_response = MagicMock()
+        mock_response.content = [_FakeTextBlock("ok")]
+        captured = {}
+        def capture_create(**kwargs):
+            captured["model"] = kwargs["model"]
+            return mock_response
+        with patch.object(main.client.messages, "create", side_effect=capture_create):
+            fn = self._make_fn(tmp_path)
+            fn("my-agent", "hello")
+        assert captured["model"] == "claude-sonnet-4-6"
+
+    def test_no_tools_passed_to_sub_agent(self, tmp_path, monkeypatch):
+        """Sub-agent must receive no tools — prevents recursion."""
+        agent_file = tmp_path / "agent.md"
+        agent_file.write_text("---\nname: my-agent\n---\n\nYou are an agent.", encoding="utf-8")
+        monkeypatch.setattr(main, "_agents_registry", {
+            "my-agent": {"file_path": str(agent_file), "model": "claude-sonnet-4-6"}
+        })
+        mock_response = MagicMock()
+        mock_response.content = [_FakeTextBlock("ok")]
+        captured = {}
+        def capture_create(**kwargs):
+            captured["kwargs"] = kwargs
+            return mock_response
+        with patch.object(main.client.messages, "create", side_effect=capture_create):
+            fn = self._make_fn(tmp_path)
+            fn("my-agent", "hello")
+        assert "tools" not in captured["kwargs"]
+
+    def test_handle_message_registers_run_agent_sync(self, tmp_path, monkeypatch):
+        """After handle_message is called, run_agent must be registered."""
+        import asyncio
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        monkeypatch.setattr(main, "_agents_registry", {})
+        mock_response = MagicMock()
+        mock_response.stop_reason = "end_turn"
+        mock_response.content = [_FakeTextBlock("hello")]
+        with patch.object(main.client.messages, "create", return_value=mock_response):
+            asyncio.run(main.handle_message("u1", "s1", "hi"))
+        assert main.registry.get_tool("run_agent") is not None
