@@ -1,6 +1,8 @@
 import os
 from datetime import datetime, timedelta
 
+import pytest
+
 import main
 
 
@@ -432,3 +434,118 @@ class TestExtractFrontmatterBody:
         content = "---\nname: foo\n---\nSome --- inline dashes"
         result = main.extract_frontmatter_body(content)
         assert result == "Some --- inline dashes"
+
+
+class TestLoadAgentsIndex:
+
+    @pytest.fixture(autouse=True)
+    def reset_registry(self, monkeypatch):
+        monkeypatch.setattr(main, "_agents_registry", {})
+
+    def test_returns_empty_if_no_agents_dir(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        assert main.load_agents_index() == ""
+
+    def test_returns_empty_if_no_agent_subdirs(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        (tmp_path / "agents").mkdir()
+        assert main.load_agents_index() == ""
+
+    def test_returns_empty_if_agent_dir_has_no_md_file(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        (tmp_path / "agents" / "my_agent").mkdir(parents=True)
+        assert main.load_agents_index() == ""
+
+    def test_basic_agent_appears_in_xml(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        d = tmp_path / "agents" / "summarizer_agent"
+        d.mkdir(parents=True)
+        (d / "summarizer_agent.md").write_text(
+            "---\nname: summarizer-agent\ndescription: Summarizes text.\n---\n\n## Role\nYou summarize.",
+            encoding="utf-8",
+        )
+        result = main.load_agents_index()
+        assert "<name>summarizer-agent</name>" in result
+        assert "<description>Summarizes text.</description>" in result
+        assert "<location>" in result
+        assert "<directory>" in result
+        assert "summarizer_agent.md" in result
+
+    def test_no_model_field_stores_none_in_registry(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        d = tmp_path / "agents" / "my_agent"
+        d.mkdir(parents=True)
+        (d / "my_agent.md").write_text(
+            "---\nname: my-agent\ndescription: Does stuff.\n---\n\nbody",
+            encoding="utf-8",
+        )
+        main.load_agents_index()
+        assert main._agents_registry["my-agent"]["model"] is None
+
+    def test_agent_without_name_skipped_silently(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        d = tmp_path / "agents" / "unnamed"
+        d.mkdir(parents=True)
+        (d / "unnamed.md").write_text(
+            "---\ndescription: No name here.\n---\n\nbody",
+            encoding="utf-8",
+        )
+        result = main.load_agents_index()
+        assert result == ""
+        assert main._agents_registry == {}
+
+    def test_xml_special_chars_escaped(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        d = tmp_path / "agents" / "my_agent"
+        d.mkdir(parents=True)
+        (d / "my_agent.md").write_text(
+            "---\nname: my-agent\ndescription: Load <data> & save\n---\n\nbody",
+            encoding="utf-8",
+        )
+        result = main.load_agents_index()
+        assert "<data>" not in result
+        assert "&lt;data&gt;" in result
+        assert "&amp;" in result
+
+    def test_multiple_agents_sorted_alphabetically(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        for name in ["zebra_agent", "alpha_agent", "middle_agent"]:
+            d = tmp_path / "agents" / name
+            d.mkdir(parents=True)
+            (d / f"{name}.md").write_text(
+                f"---\nname: {name.replace('_', '-')}\ndescription: desc\n---\nbody",
+                encoding="utf-8",
+            )
+        result = main.load_agents_index()
+        assert result.index("alpha-agent") < result.index("middle-agent") < result.index("zebra-agent")
+
+    def test_registry_populated_correctly(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        d = tmp_path / "agents" / "my_agent"
+        d.mkdir(parents=True)
+        (d / "my_agent.md").write_text(
+            "---\nname: my-agent\ndescription: Does stuff.\nmodel: claude-sonnet-4-6\n---\nbody",
+            encoding="utf-8",
+        )
+        main.load_agents_index()
+        entry = main._agents_registry["my-agent"]
+        assert "file_path" in entry
+        assert entry["model"] == "claude-sonnet-4-6"
+
+    def test_stale_entry_absent_after_second_call(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "WORKSPACE_DIR", str(tmp_path))
+        d = tmp_path / "agents" / "my_agent"
+        d.mkdir(parents=True)
+        md = d / "my_agent.md"
+        md.write_text(
+            "---\nname: my-agent\ndescription: desc.\n---\nbody",
+            encoding="utf-8",
+        )
+        main.load_agents_index()
+        assert "my-agent" in main._agents_registry
+
+        # Remove the agent file and call again
+        md.unlink()
+        d.rmdir()
+        main.load_agents_index()
+        assert "my-agent" not in main._agents_registry

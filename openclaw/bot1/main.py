@@ -26,6 +26,7 @@ DANGEROUS_PATTERNS = [r"\brm\b", r"\bsudo\b", r"\bchmod\b", r"\bcurl.*\|.*sh"]
 APPROVALS_FILE = "./workspace/exec-approvals.json"
 
 WORKSPACE_DIR = "./workspace"
+_agents_registry: dict = {}
 CONTEXT_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "IDENTITY.md", "TOOLS.md"]
 
 def build_memory_prompt() -> str:
@@ -178,6 +179,65 @@ def load_skills_index() -> str:
         "the skill's <directory> when calling run_command.\n\n"
         f"<available_skills>\n{xml_entries}\n</available_skills>"
     )
+
+def load_agents_index() -> str:
+    """Scan workspace/agents/ and build a compact XML agents index.
+
+    Clears and repopulates _agents_registry on every call. Returns the
+    preamble + <available_agents> XML block, or "" if no agents are found
+    or the directory does not exist.
+    """
+    global _agents_registry
+    _agents_registry.clear()
+
+    agents_dir = os.path.join(WORKSPACE_DIR, "agents")
+    try:
+        entries = sorted(os.listdir(agents_dir))
+    except OSError:
+        return ""
+
+    agents = []
+    for name in entries:
+        dir_path = os.path.join(agents_dir, name)
+        if not os.path.isdir(dir_path):
+            continue
+        agent_file = os.path.join(dir_path, f"{name}.md")
+        try:
+            with open(agent_file, "r", encoding="utf-8") as f:
+                content = f.read()
+        except Exception:
+            continue
+        meta = parse_skill_frontmatter(content)
+        agent_name = meta.get("name", "").strip()
+        if not agent_name:
+            continue
+        model = meta.get("model", None) or None
+        _agents_registry[agent_name] = {"file_path": agent_file, "model": model}
+        agents.append({
+            "name": agent_name,
+            "description": meta.get("description", ""),
+            "location": agent_file,
+            "directory": dir_path,
+        })
+
+    if not agents:
+        return ""
+
+    xml_entries = "\n".join(
+        f"  <agent>\n"
+        f"    <name>{html.escape(a['name'])}</name>\n"
+        f"    <description>{html.escape(a['description'])}</description>\n"
+        f"    <location>{html.escape(a['location'])}</location>\n"
+        f"    <directory>{html.escape(a['directory'])}</directory>\n"
+        f"  </agent>"
+        for a in agents
+    )
+    return (
+        "When a task matches one of the agents below, use the `run_agent` tool "
+        "to dispatch the task to that agent.\n\n"
+        f"<available_agents>\n{xml_entries}\n</available_agents>"
+    )
+
 
 def load_approvals():
     if os.path.exists(APPROVALS_FILE):
