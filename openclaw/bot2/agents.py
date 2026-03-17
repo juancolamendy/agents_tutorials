@@ -12,8 +12,12 @@ import re
 
 from agno.agent import Agent
 from agno.models.anthropic import Claude
+from agno.tools.memory import MemoryTools
 from agno.run import RunContext  # verified agno 2.5.9
 from agno.tools import Toolkit
+
+from tools import BotToolkit
+from constants import APPROVALS_FILE
 
 # Resolved via __file__ so the bot works from any working directory.
 WORKSPACE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "workspace")
@@ -135,12 +139,17 @@ class AgentsToolkit(Toolkit):
             with open(entry["file_path"], "r", encoding="utf-8") as f:
                 content = f.read()
 
-            body = extract_frontmatter_body(content)
+            from prompt import build_subagent_system_prompt
+            system_prompt = build_subagent_system_prompt(content)
             model = entry["model"] or "claude-sonnet-4-6"
 
             sub_agent = Agent(
                 model=Claude(id=model),
-                system_message=body,
+                system_message=system_prompt,
+                tools=[
+                    BotToolkit(approvals_file=APPROVALS_FILE),
+                    AgentsToolkit(),
+                ],                
                 # no db, no tools, no session_id — ephemeral one-shot agent
             )
 

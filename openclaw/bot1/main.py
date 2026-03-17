@@ -36,6 +36,32 @@ You have a long-term memory system.
 - Use memory_search at the start of conversations to recall context from previous sessions.
 Memory files are stored in ./memory/ as markdown files."""
 
+def build_subagent_system_prompt(agent_file_content: str) -> str:
+    """Assemble the system prompt for a sub-agent.
+
+    Combines the agent's own instructions (body of its .md file) with the
+    current date, memory tool instructions, skills index, and agents index.
+    """
+    parts = []
+
+    body = extract_frontmatter_body(agent_file_content)
+    if body:
+        parts.append(body)
+
+    date_str = datetime.now().strftime("%A, %B %d, %Y")
+    parts.append(f"## Current Date & Time\n\n{date_str}")
+
+    skills = load_skills_index()
+    if skills:
+        parts.append(f"## Skills\n\n{skills}")
+
+    agents = load_agents_index()
+    if agents:
+        parts.append(f"## Agents\n\n{agents}")
+
+    return "\n\n".join(parts)
+
+
 def build_system_prompt() -> str:
     """Assemble the system prompt from workspace files, skills index, and memory instructions."""
     parts = []
@@ -398,6 +424,14 @@ def tool_memory_search(query: str) -> str:
                 results.append(f"--- {fname} ---\n{content}")
     return "\n\n".join(results) if results else "No matching memories found."
 
+registry = ToolRegistry()
+registry.register("run_command", tool_run_command)
+registry.register("read_file", tool_read_file)
+registry.register("write_file", tool_write_file)
+registry.register("web_search", tool_web_search)
+registry.register("save_memory", tool_save_memory)
+registry.register("memory_search", tool_memory_search)
+
 def _make_tool_run_agent(user_id: str, session_id: str):
     """Factory that returns a run_agent closure bound to a specific session."""
     def run_agent(agent_name: str, input: str) -> str:
@@ -415,7 +449,7 @@ def _make_tool_run_agent(user_id: str, session_id: str):
         except Exception as e:
             return f"Error running agent '{agent_name}': {e}"
 
-        body = extract_frontmatter_body(content)
+        system_prompt = build_subagent_system_prompt(content)
         model = entry["model"] or "claude-sonnet-4-6"
         messages = load_session(user_id, session_id)
         messages = messages + [{"role": "user", "content": input}]
@@ -425,23 +459,15 @@ def _make_tool_run_agent(user_id: str, session_id: str):
             response = client.messages.create(
                 model=model,
                 max_tokens=4096,
-                system=body,
+                system=system_prompt,
                 messages=messages,
+                tools=registry.descriptions(),
             )
             return response.content[0].text
         except Exception as e:
             return f"Error running agent '{agent_name}': {e}"
 
     return run_agent
-
-
-registry = ToolRegistry()
-registry.register("run_command", tool_run_command)
-registry.register("read_file", tool_read_file)
-registry.register("write_file", tool_write_file)
-registry.register("web_search", tool_web_search)
-registry.register("save_memory", tool_save_memory)
-registry.register("memory_search", tool_memory_search)
 
 def execute_tool(name, tool_input):
     tool = registry.get_tool(name)

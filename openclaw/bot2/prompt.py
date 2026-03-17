@@ -3,7 +3,7 @@ import os
 import re
 from datetime import datetime, timedelta
 
-from agents import load_agents_index
+from agents import extract_frontmatter_body, load_agents_index
 
 # Resolve relative to this file so the bot works from any working directory.
 # Do NOT use "./workspace" — it breaks when invoked from outside bot2/.
@@ -117,6 +117,35 @@ def build_system_prompt() -> str:
     daily_mem = load_daily_memory()
     if daily_mem:
         parts.append(f"## Recent Memory\n\n{daily_mem}")
+
+    skills = load_skills_index()
+    if skills:
+        parts.append(f"## Skills\n\n{skills}")
+
+    agents_index = load_agents_index()
+    if agents_index:
+        parts.append(f"## Agents\n\n{agents_index}")
+
+    return "\n\n".join(parts)
+
+
+def build_subagent_system_prompt(agent_content: str) -> str:
+    """Assemble a full system prompt for a subagent.
+
+    Combines the agent body (frontmatter stripped) with current date,
+    TOOLS.md context, skills index, and agents index.
+
+    Args:
+        agent_content: Raw markdown content of the agent's .md file (including frontmatter).
+    """
+    parts = []
+
+    body = extract_frontmatter_body(agent_content)
+    if body:
+        parts.append(body)
+
+    date_str = datetime.now().strftime("%A, %B %d, %Y")
+    parts.append(f"## Current Date & Time\n\n{date_str}")
 
     skills = load_skills_index()
     if skills:

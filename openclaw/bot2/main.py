@@ -22,18 +22,13 @@ from agno.models.anthropic import Claude
 from agno.tools.memory import MemoryTools
 
 from agents import AgentsToolkit
+from constants import APPROVALS_FILE, MEMORY_DIR, SESSIONS_DIR
 from memory_db import MarkdownMemoryDb
 from prompt import build_system_prompt
 from storage import JsonlAgentDb
 from tools import BotToolkit
 
 load_dotenv()
-
-# Resolve paths relative to this file so the bot works from any CWD.
-_HERE = os.path.dirname(os.path.abspath(__file__))
-SESSIONS_DIR = os.path.join(_HERE, 'sessions')
-MEMORY_DIR = os.path.join(_HERE, 'memory')
-APPROVALS_FILE = os.path.join(_HERE, 'workspace', 'exec-approvals.json')
 
 os.makedirs(SESSIONS_DIR, exist_ok=True)
 os.makedirs(MEMORY_DIR, exist_ok=True)
