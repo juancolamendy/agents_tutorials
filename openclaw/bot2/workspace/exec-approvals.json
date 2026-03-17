@@ -10,7 +10,8 @@
     "curl -s \"wttr.in/Miami,Florida?format=3\"",
     "find /Users/jcolamendy/ai_ml/agents_tutorials/openclaw/bot2/workspace -name \"printout_sysinfo.py\"",
     "uv run /Users/jcolamendy/ai_ml/agents_tutorials/openclaw/bot2/workspace/skills/system_info/scripts/printout_sysinfo.py",
-    "uv run /Users/jcolamendy/ai_ml/agents_tutorials/openclaw/bot2/workspace/skills/running_processes/scripts/list_processes.py"
+    "uv run /Users/jcolamendy/ai_ml/agents_tutorials/openclaw/bot2/workspace/skills/running_processes/scripts/list_processes.py",
+    "curl -s \"wttr.in/Coconut+Creek,Florida?format=3\""
   ],
   "denied": []
 }
