@@ -109,3 +109,23 @@ def load_agents_index() -> str:
         "with the agent's name and a clear task description.\n\n"
     )
     return preamble + f"<available_agents>\n{xml_entries}\n</available_agents>"
+
+
+class AgentsToolkit(Toolkit):
+    """Agno Toolkit providing the run_agent tool for sub-agent dispatch."""
+
+    def __init__(self) -> None:
+        super().__init__(name="agent_tools", tools=[self.run_agent])
+
+    def run_agent(self, run_context: RunContext, agent_name: str, task: str) -> str:
+        """Dispatch a task to a specialized sub-agent and return its response.
+
+        Args:
+            agent_name: Name of the agent as listed in the agents index.
+            task: The task or question to send to the agent.
+
+        Note:
+            run_context is injected automatically by Agno — do not pass it manually.
+        """
+        # Implementation added in Phase 7 and 8
+        raise NotImplementedError

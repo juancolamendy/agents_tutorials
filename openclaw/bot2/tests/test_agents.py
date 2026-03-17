@@ -6,6 +6,7 @@ Tests for extract_frontmatter_body, load_agents_index, and AgentsToolkit.
 import shutil
 
 import pytest
+from agno.tools import Toolkit
 import agents
 import agents as agents_module  # alias used by TestLoadAgentsIndex* and TestRunAgent*
 
@@ -206,3 +207,20 @@ class TestLoadAgentsIndexEdgeCases:
         assert set(registry.keys()) == {"my-agent"}
         assert set(registry["my-agent"].keys()) == {"file_path", "model"}
         assert registry["my-agent"]["model"] == "claude-opus-4-6"
+
+
+class TestAgentsToolkitRegistration:
+
+    def test_is_agno_toolkit_instance(self):
+        from agents import AgentsToolkit
+        assert isinstance(AgentsToolkit(), Toolkit)
+
+    def test_run_agent_registered_in_functions(self):
+        from agents import AgentsToolkit
+        toolkit = AgentsToolkit()
+        assert "run_agent" in toolkit.functions
+
+    def test_no_extra_tools_registered(self):
+        from agents import AgentsToolkit
+        toolkit = AgentsToolkit()
+        assert list(toolkit.functions.keys()) == ["run_agent"]
