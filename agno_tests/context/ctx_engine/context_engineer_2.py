@@ -24,7 +24,6 @@ import lancedb
 from openai import OpenAI as OpenAIClient
 
 from agno.agent import Agent
-from agno.team import Team
 from agno.models.anthropic import Claude
 from agno.tools import Toolkit
 from agno.run import RunContext
@@ -114,46 +113,46 @@ Multi-agent systems split responsibilities across agents like Librarian, Researc
 Context engineering designs prompts, blueprints, and workflows to control how agents use tools and knowledge.
 """
 
-db = lancedb.connect("./context_enginer_1.db")
+db = lancedb.connect("./context_engineer_library.db")
 
 def init_lancedb():
-    # Context Library
-    try:
-        db.drop_table("context_library")
-    except Exception:
-        pass
+    existing = set(db.table_names())
 
-    descs = [bp["description"] for bp in BLUEPRINTS]
-    desc_emb = embed_batch(descs)
-    ctx_rows = []
-    for bp, e in zip(BLUEPRINTS, desc_emb):
-        ctx_rows.append({
-            "id": bp["id"],
-            "description": bp["description"],
-            "blueprint": json.dumps(bp["blueprint"]),
-            "vector": e,
-        })
-    ctx_table = db.create_table("context_library", data=ctx_rows)
+    # Context Library
+    if "context_library" in existing:
+        ctx_table = db.open_table("context_library")
+        print(f"Context library: reusing existing table ({ctx_table.count_rows()} rows)")
+    else:
+        descs = [bp["description"] for bp in BLUEPRINTS]
+        desc_emb = embed_batch(descs)
+        ctx_rows = []
+        for bp, e in zip(BLUEPRINTS, desc_emb):
+            ctx_rows.append({
+                "id": bp["id"],
+                "description": bp["description"],
+                "blueprint": json.dumps(bp["blueprint"]),
+                "vector": e,
+            })
+        ctx_table = db.create_table("context_library", data=ctx_rows)
+        print(f"Context library: created with {len(ctx_rows)} rows")
 
     # Knowledge Base
-    try:
-        db.drop_table("knowledge_base")
-    except Exception:
-        pass
+    if "knowledge_base" in existing:
+        kb_table = db.open_table("knowledge_base")
+        print(f"Knowledge base: reusing existing table ({kb_table.count_rows()} rows)")
+    else:
+        chunks = chunk_text(RAW_KNOWLEDGE, chunk_size=260, overlap=40)
+        ch_emb = embed_batch(chunks)
+        kb_rows = []
+        for i, (txt, e) in enumerate(zip(chunks, ch_emb)):
+            kb_rows.append({
+                "id": f"chunk_{i}",
+                "text": txt,
+                "vector": e,
+            })
+        kb_table = db.create_table("knowledge_base", data=kb_rows)
+        print(f"Knowledge base: created with {len(kb_rows)} rows")
 
-    chunks = chunk_text(RAW_KNOWLEDGE, chunk_size=260, overlap=40)
-    ch_emb = embed_batch(chunks)
-    kb_rows = []
-    for i, (txt, e) in enumerate(zip(chunks, ch_emb)):
-        kb_rows.append({
-            "id": f"chunk_{i}",
-            "text": txt,
-            "vector": e,
-        })
-    kb_table = db.create_table("knowledge_base", data=kb_rows)
-
-    print(f"Context library rows: {len(ctx_rows)}")
-    print(f"Knowledge base rows: {len(kb_rows)}")
     return ctx_table, kb_table
 
 context_table, knowledge_table = init_lancedb()
@@ -171,8 +170,10 @@ class LibrarianTools(Toolkit):
 
     def semantic_blueprint_search(self,
                                  run_context: RunContext,
-                                 intent_query: str) -> str:
+                                 intent_query: Optional[str] = None) -> str:
         """Procedural RAG over context_library."""
+        if intent_query is None:
+            intent_query = "Default neutral blueprint for a casual summary"
         emb = embed_batch([intent_query])[0]
         df = context_table.search(emb).limit(1).to_pandas()
         if len(df) == 0:
@@ -211,9 +212,11 @@ class ResearcherTools(Toolkit):
 
     def semantic_research(self,
                           run_context: RunContext,
-                          query: str,
+                          query: Optional[str] = None,
                           limit: int = 5) -> str:
         """Factual RAG over knowledge_base."""
+        if query is None:
+            query = "No query provided"
         emb = embed_batch([query])[0]
         df = knowledge_table.search(emb).limit(limit).to_pandas()
         results = [{"id": r["id"], "text": r["text"]} for _, r in df.iterrows()]
@@ -253,6 +256,7 @@ librarian_agent = Agent(
         "Keep your own text short; the important data is in the JSON tool output."
     ),
     markdown=True,
+    debug_mode=True,
 )
 
 researcher_agent = Agent(
@@ -266,6 +270,7 @@ researcher_agent = Agent(
         "Then summarise briefly what you found."
     ),
     markdown=True,
+    debug_mode=True,
 )
 
 writer_agent = Agent(
@@ -280,6 +285,7 @@ writer_agent = Agent(
         "Do not mention agents, tools, or the internal process."
     ),
     markdown=True,
+    debug_mode=True,
 )
 
 # ============================================================
@@ -372,6 +378,7 @@ def _build_planner_instructions(registry: AgentRegistry) -> str:
         f"{agent_lines}\n\n"
         "Each agent reads its own dependencies from session_state via its own tools.\n"
         "For the final content agent, input_template should only state the goal.\n\n"
+        "Call the subagents in the order that makes the most sense for the plan goals.\n"
         "Output schema (use the exact agent names listed above):\n"
         "{\n"
         "  \"steps\": [\n"
@@ -388,6 +395,7 @@ planner_agent = Agent(
     model=model,
     instructions=_build_planner_instructions(agent_registry),
     markdown=False,
+    debug_mode=True,
 )
 
 def planner_step_fn(step_input, run_context: RunContext):
@@ -458,6 +466,7 @@ executor_agent = Agent(
         "Execute the above algorithm carefully and deterministically."
     ),
     markdown=True,
+    debug_mode=True,
 )
 
 def executor_step_fn(step_input, run_context: RunContext):
@@ -497,8 +506,9 @@ context_engine_workflow = Workflow(
     session_state={},
     db=SqliteDb(
         session_table="generic_context_engine_sessions",
-        db_file="context_engine_2.db",
+        db_file="context_engineer_sessions.db",
     ),
+    debug_mode=True,
 )
 
 # ============================================================
@@ -528,15 +538,27 @@ def run_context_engine(
 # ============================================================
 
 if __name__ == "__main__":
-    res = run_context_engine(
-        goal="Explain retrieval-augmented generation to a non-technical founder.",
-        style_hint="casual summary with friendly tone",
-    )
-    print("\n=== FINAL OUTPUT ===\n")
-    print(res["final_output"])
-    print("\n=== PLAN ===\n")
-    print(json.dumps(res["plan"], indent=2))
-    print("\n=== TRACE LOGS ===\n")
-    for log in res["trace_logs"]:
-        print(log)
+    print("Context Engine ready. Type your goal and press Enter. Type /exit to quit.")
+    while True:
+        try:
+            user_input = input("\nGoal> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nExiting.")
+            break
+
+        if user_input == "/exit":
+            print("Exiting.")
+            break
+
+        if not user_input:
+            continue
+
+        res = run_context_engine(goal=user_input)
+        print("\n=== FINAL OUTPUT ===\n")
+        print(res["final_output"])
+        print("\n=== PLAN ===\n")
+        print(json.dumps(res["plan"], indent=2))
+        print("\n=== TRACE LOGS ===\n")
+        for log in res["trace_logs"]:
+            print(log)
 
