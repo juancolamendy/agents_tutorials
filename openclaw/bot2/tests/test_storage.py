@@ -8,7 +8,6 @@ Uses the actual Agno API:
 AgentSession is a dataclass from agno.session.agent (NOT agno.db.session).
 """
 
-import json
 
 import pytest
 
@@ -58,7 +57,7 @@ class TestJsonlAgentDb:
         )
         assert loaded is not None
         assert loaded.session_id == 's1'
-        lines = [l for l in second_content.splitlines() if l.strip()]
+        lines = [line for line in second_content.splitlines() if line.strip()]
         assert len(lines) == 1, (
             f'Expected single-line JSON, got {len(lines)} lines'
         )

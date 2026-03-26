@@ -9,7 +9,6 @@ import json
 import os
 import re
 import subprocess
-from typing import Optional
 
 from agno.tools import Toolkit
 

@@ -113,7 +113,7 @@ class TestLoadAgentsIndexValid:
     def test_registry_populated_with_file_path_and_model(self, tmp_path, monkeypatch):
         monkeypatch.setattr(agents_module, "WORKSPACE_DIR", str(tmp_path))
         agents_dir = tmp_path / "agents"
-        agent_dir = _make_agent_file(
+        _make_agent_file(
             agents_dir, "summarizer_agent",
             {"name": "summarizer-agent", "description": "Summarize.", "model": "claude-haiku-4-5-20251001"}
         )

@@ -12,7 +12,6 @@ import re
 
 from agno.agent import Agent
 from agno.models.anthropic import Claude
-from agno.tools.memory import MemoryTools
 from agno.run import RunContext  # verified agno 2.5.9
 from agno.tools import Toolkit
 

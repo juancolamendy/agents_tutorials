@@ -2,7 +2,6 @@
 with agno's MemoryTools(db=...) interface.
 """
 
-import os
 import pytest
 from memory_db import MarkdownMemoryDb
 from agno.memory import UserMemory
