@@ -21,7 +21,7 @@ from agno.agent import Agent
 from agno.models.anthropic import Claude
 from agno.tools.memory import MemoryTools
 
-from agents import AgentsToolkit
+from agents import AgentRegistry, AgentsToolkit
 from constants import APPROVALS_FILE, MEMORY_DIR, SESSIONS_DIR
 from memory_db import MarkdownMemoryDb
 from prompt import build_system_prompt
@@ -35,6 +35,7 @@ os.makedirs(SESSIONS_DIR, exist_ok=True)
 os.makedirs(MEMORY_DIR, exist_ok=True)
 
 skill_registry = SkillRegistry()
+agent_registry = AgentRegistry()
 
 
 def build_agent() -> Agent:
@@ -45,10 +46,10 @@ def build_agent() -> Agent:
     """
     return Agent(
         model=Claude(id='claude-sonnet-4-6', cache_system_prompt=True),
-        system_message=build_system_prompt(skill_registry),
+        system_message=build_system_prompt(skill_registry, agent_registry),
         tools=[
             BotToolkit(approvals_file=APPROVALS_FILE),
-            AgentsToolkit(skill_registry=skill_registry),
+            AgentsToolkit(skill_registry=skill_registry, agent_registry=agent_registry),
             MemoryTools(db=MarkdownMemoryDb(MEMORY_DIR)),
         ],
         db=JsonlAgentDb(sessions_dir=SESSIONS_DIR),

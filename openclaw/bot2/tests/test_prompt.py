@@ -1,7 +1,8 @@
 from datetime import datetime, timedelta
 
-import prompt  # bot2/prompt.py
 import agents as agents_module
+import prompt  # bot2/prompt.py
+from skills import SkillRegistry
 
 
 class TestParseSkillFrontmatter:
@@ -135,22 +136,20 @@ class TestLoadDailyMemory:
         assert f"### Memory {yesterday}" not in result
 
 
-class TestLoadSkillsIndex:
+class TestSkillRegistry:
 
-    def test_returns_empty_if_no_skills_dir(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(prompt, "WORKSPACE_DIR", str(tmp_path))
-        result = prompt.load_skills_index()
+    def test_returns_empty_if_no_skills_dir(self, tmp_path):
+        result = SkillRegistry(workspace_dir=str(tmp_path)).get_skills_index()
         assert result == ""
 
-    def test_basic_skill_appears_in_xml(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(prompt, "WORKSPACE_DIR", str(tmp_path))
+    def test_basic_skill_appears_in_xml(self, tmp_path):
         skill_dir = tmp_path / "skills" / "github"
         skill_dir.mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text(
             "---\nname: github\ndescription: GitHub CLI.\n---\n# GitHub",
             encoding="utf-8",
         )
-        result = prompt.load_skills_index()
+        result = SkillRegistry(workspace_dir=str(tmp_path)).get_skills_index()
         assert "<name>github</name>" in result
         assert "<description>GitHub CLI.</description>" in result
         assert "SKILL.md" in result
@@ -158,50 +157,56 @@ class TestLoadSkillsIndex:
         assert "<directory>" in result
         assert str(skill_dir) in result
 
-    def test_skill_directory_path_instruction_present(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(prompt, "WORKSPACE_DIR", str(tmp_path))
+    def test_skill_directory_path_instruction_present(self, tmp_path):
         skill_dir = tmp_path / "skills" / "weather"
         skill_dir.mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text("---\nname: weather\n---", encoding="utf-8")
-        result = prompt.load_skills_index()
+        result = SkillRegistry(workspace_dir=str(tmp_path)).get_skills_index()
         assert "relative to that" in result
         assert "run_command" in result
 
-    def test_skills_sorted_alphabetically(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(prompt, "WORKSPACE_DIR", str(tmp_path))
+    def test_skills_sorted_alphabetically(self, tmp_path):
         for name in ["weather", "github", "calendar"]:
             d = tmp_path / "skills" / name
             d.mkdir(parents=True)
             (d / "SKILL.md").write_text(f"---\nname: {name}\n---", encoding="utf-8")
-        result = prompt.load_skills_index()
+        result = SkillRegistry(workspace_dir=str(tmp_path)).get_skills_index()
         assert result.index("calendar") < result.index("github") < result.index("weather")
 
-    def test_xml_special_chars_escaped(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(prompt, "WORKSPACE_DIR", str(tmp_path))
+    def test_xml_special_chars_escaped(self, tmp_path):
         skill_dir = tmp_path / "skills" / "myskill"
         skill_dir.mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text(
             "---\nname: test\ndescription: Load <data> & save\n---",
             encoding="utf-8",
         )
-        result = prompt.load_skills_index()
+        result = SkillRegistry(workspace_dir=str(tmp_path)).get_skills_index()
         assert "<data>" not in result
         assert "&lt;data&gt;" in result
         assert "&amp;" in result
+
+
+def _make_registries(tmp_path):
+    """Return (skill_registry, agent_registry) both pointing at tmp_path."""
+    return (
+        SkillRegistry(workspace_dir=str(tmp_path)),
+        agents_module.AgentRegistry(workspace_dir=str(tmp_path)),
+    )
 
 
 class TestBuildSystemPrompt:
 
     def test_date_section_always_first(self, tmp_path, monkeypatch):
         monkeypatch.setattr(prompt, "WORKSPACE_DIR", str(tmp_path))
-        result = prompt.build_system_prompt()
+        sr, ar = _make_registries(tmp_path)
+        result = prompt.build_system_prompt(sr, ar)
         assert result.startswith("## Current Date & Time")
-
 
     def test_soul_md_included_when_present(self, tmp_path, monkeypatch):
         monkeypatch.setattr(prompt, "WORKSPACE_DIR", str(tmp_path))
         (tmp_path / "SOUL.md").write_text("You are Jarvis.", encoding="utf-8")
-        result = prompt.build_system_prompt()
+        sr, ar = _make_registries(tmp_path)
+        result = prompt.build_system_prompt(sr, ar)
         assert "## SOUL.md" in result
         assert "You are Jarvis." in result
 
@@ -212,62 +217,59 @@ class TestBuildSystemPrompt:
         (skill_dir / "SKILL.md").write_text(
             "---\nname: github\ndescription: GitHub CLI.\n---", encoding="utf-8"
         )
-        result = prompt.build_system_prompt()
+        sr, ar = _make_registries(tmp_path)
+        result = prompt.build_system_prompt(sr, ar)
         assert "## Skills" in result
         assert "github" in result
+
+
+def _make_agent_file(tmp_path, name="test-agent"):
+    agents_dir = tmp_path / "agents" / "test_agent"
+    agents_dir.mkdir(parents=True)
+    (agents_dir / "test_agent.md").write_text(
+        f"---\nname: {name}\ndescription: A test agent.\n---\nYou are a specialist.",
+        encoding="utf-8",
+    )
+
+
+def _make_skill_file(tmp_path):
+    skill_dir = tmp_path / "skills" / "test_skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: test-skill\ndescription: A test skill.\n---\nBody.",
+        encoding="utf-8",
+    )
 
 
 class TestBuildSystemPromptAgents:
     """Verify ## Agents section in build_system_prompt()."""
 
-    def _setup(self, tmp_path, monkeypatch):
-        """Patch both WORKSPACE_DIRs and reset registry — required because
-        build_system_prompt() calls load_agents_index() which reads agents.WORKSPACE_DIR,
-        not prompt.WORKSPACE_DIR."""
-        monkeypatch.setattr(prompt, "WORKSPACE_DIR", str(tmp_path))
-        monkeypatch.setattr(agents_module, "WORKSPACE_DIR", str(tmp_path))
-        monkeypatch.setattr(agents_module, "_agents_registry", {})
-
-    def _make_skill(self, tmp_path):
-        """Create a minimal skill so ## Skills is present in output."""
-        skill_dir = tmp_path / "skills" / "test_skill"
-        skill_dir.mkdir(parents=True)
-        (skill_dir / "SKILL.md").write_text(
-            "---\nname: test-skill\ndescription: A test skill.\n---\nBody.",
-            encoding="utf-8",
-        )
-
-    def _make_agent(self, tmp_path, name="test-agent"):
-        agents_dir = tmp_path / "agents" / "test_agent"
-        agents_dir.mkdir(parents=True)
-        (agents_dir / "test_agent.md").write_text(
-            f"---\nname: {name}\ndescription: A test agent.\n---\nYou are a specialist.",
-            encoding="utf-8",
-        )
-
     def test_agents_section_present_when_agents_dir_has_agents(self, tmp_path, monkeypatch):
-        self._setup(tmp_path, monkeypatch)
-        self._make_agent(tmp_path)
-        result = prompt.build_system_prompt()
+        monkeypatch.setattr(prompt, "WORKSPACE_DIR", str(tmp_path))
+        _make_agent_file(tmp_path)
+        sr, ar = _make_registries(tmp_path)
+        result = prompt.build_system_prompt(sr, ar)
         assert "## Agents" in result
 
     def test_agents_section_absent_when_agents_dir_missing(self, tmp_path, monkeypatch):
-        self._setup(tmp_path, monkeypatch)
-        # No agents dir at all
-        result = prompt.build_system_prompt()
+        monkeypatch.setattr(prompt, "WORKSPACE_DIR", str(tmp_path))
+        sr, ar = _make_registries(tmp_path)
+        result = prompt.build_system_prompt(sr, ar)
         assert "## Agents" not in result
 
     def test_agents_section_absent_when_agents_dir_empty(self, tmp_path, monkeypatch):
-        self._setup(tmp_path, monkeypatch)
+        monkeypatch.setattr(prompt, "WORKSPACE_DIR", str(tmp_path))
         (tmp_path / "agents").mkdir()
-        result = prompt.build_system_prompt()
+        sr, ar = _make_registries(tmp_path)
+        result = prompt.build_system_prompt(sr, ar)
         assert "## Agents" not in result
 
     def test_agents_section_after_skills_section(self, tmp_path, monkeypatch):
-        self._setup(tmp_path, monkeypatch)
-        self._make_skill(tmp_path)
-        self._make_agent(tmp_path)
-        result = prompt.build_system_prompt()
+        monkeypatch.setattr(prompt, "WORKSPACE_DIR", str(tmp_path))
+        _make_skill_file(tmp_path)
+        _make_agent_file(tmp_path)
+        sr, ar = _make_registries(tmp_path)
+        result = prompt.build_system_prompt(sr, ar)
         assert "## Skills" in result
         assert "## Agents" in result
         assert result.index("## Skills") < result.index("## Agents")

@@ -2,7 +2,7 @@
 
 Provides:
     extract_frontmatter_body: strip YAML frontmatter, return body text
-    load_agents_index: scan workspace/agents/, return XML index for system prompt
+    AgentRegistry: scan workspace/agents/, cache entries, build XML index
     AgentsToolkit: Agno Toolkit with run_agent tool
 """
 
@@ -20,11 +20,6 @@ from constants import APPROVALS_FILE
 
 # Resolved via __file__ so the bot works from any working directory.
 WORKSPACE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "workspace")
-
-# Module-level registry populated by load_agents_index().
-# key:   frontmatter "name" value (e.g. "summarizer-agent")
-# value: {"file_path": str, "model": str | None}
-_agents_registry: dict[str, dict] = {}
 
 
 def extract_frontmatter_body(content: str) -> str:
@@ -53,72 +48,81 @@ def _parse_frontmatter(content: str) -> dict:
     return meta
 
 
-def load_agents_index() -> str:
-    """Scan workspace/agents/ and return an XML index for the system prompt.
+class AgentRegistry:
+    def __init__(self, workspace_dir: str = WORKSPACE_DIR):
+        self._workspace_dir = workspace_dir
+        self._registry: dict[str, dict] | None = None
+        self._agents_list: list[dict] | None = None
 
-    Clears and repopulates _agents_registry as a side effect.
-    Returns empty string when no agents are found or the directory is missing.
-    """
-    global _agents_registry
-    _agents_registry = {}
+    def load_agents(self) -> list[dict]:
+        """Read workspace/agents/, parse each agent .md, and cache the results."""
+        if self._registry is not None:
+            return self._agents_list  # type: ignore[return-value]
 
-    agents_dir = os.path.join(WORKSPACE_DIR, "agents")
-    try:
-        entries = sorted(os.listdir(agents_dir))
-    except OSError:
-        return ""
+        self._registry = {}
+        self._agents_list = []
 
-    agents_list = []
-    for name in entries:
-        dir_path = os.path.join(agents_dir, name)
-        if not os.path.isdir(dir_path):
-            continue
-        agent_file = os.path.join(dir_path, f"{name}.md")
+        agents_dir = os.path.join(self._workspace_dir, "agents")
         try:
-            with open(agent_file, "r", encoding="utf-8") as f:
-                content = f.read()
-        except Exception:
-            continue
-        meta = _parse_frontmatter(content)
-        agent_name = meta.get("name", "").strip()
-        if not agent_name:
-            continue
-        description = meta.get("description", "")
-        model = meta.get("model") or None
-        _agents_registry[agent_name] = {"file_path": agent_file, "model": model}
-        agents_list.append(
-            {
+            entries = sorted(os.listdir(agents_dir))
+        except OSError:
+            return self._agents_list
+
+        for name in entries:
+            dir_path = os.path.join(agents_dir, name)
+            if not os.path.isdir(dir_path):
+                continue
+            agent_file = os.path.join(dir_path, f"{name}.md")
+            try:
+                with open(agent_file, "r", encoding="utf-8") as f:
+                    content = f.read()
+            except Exception:
+                continue
+            meta = _parse_frontmatter(content)
+            agent_name = meta.get("name", "").strip()
+            if not agent_name:
+                continue
+            description = meta.get("description", "")
+            model = meta.get("model") or None
+            self._registry[agent_name] = {"content": content, "model": model}
+            self._agents_list.append({
                 "name": agent_name,
                 "description": description,
-                "location": agent_file,
-                "directory": dir_path,
-            }
+            })
+
+        return self._agents_list
+
+    def get(self, agent_name: str) -> dict | None:
+        """Return registry entry for agent_name, or None if not found."""
+        self.load_agents()
+        return self._registry.get(agent_name)  # type: ignore[union-attr]
+
+    def get_agents_index(self) -> str:
+        """Return a formatted XML agents index string for use in the system prompt."""
+        agents_list = self.load_agents()
+        if not agents_list:
+            return ""
+
+        xml_entries = "\n".join(
+            f"  <agent>\n"
+            f"    <name>{html.escape(a['name'])}</name>\n"
+            f"    <description>{html.escape(a['description'])}</description>\n"
+            f"  </agent>"
+            for a in agents_list
         )
-
-    if not agents_list:
-        return ""
-
-    xml_entries = "\n".join(
-        f"  <agent>\n"
-        f"    <name>{html.escape(a['name'])}</name>\n"
-        f"    <description>{html.escape(a['description'])}</description>\n"
-        f"    <location>{html.escape(a['location'])}</location>\n"
-        f"    <directory>{html.escape(a['directory'])}</directory>\n"
-        f"  </agent>"
-        for a in agents_list
-    )
-    preamble = (
-        "When a task is better handled by a specialist, use the run_agent tool "
-        "with the agent's name and a clear task description.\n\n"
-    )
-    return preamble + f"<available_agents>\n{xml_entries}\n</available_agents>"
+        preamble = (
+            "When a task is better handled by a specialist, use the `run_agent` tool "
+            "with the agent's name and a clear task description.\n\n"
+        )
+        return preamble + f"<available_agents>\n{xml_entries}\n</available_agents>"
 
 
 class AgentsToolkit(Toolkit):
     """Agno Toolkit providing the run_agent tool for sub-agent dispatch."""
 
-    def __init__(self, skill_registry=None) -> None:
+    def __init__(self, skill_registry=None, agent_registry: AgentRegistry | None = None) -> None:
         self._skill_registry = skill_registry
+        self._agent_registry = agent_registry
         super().__init__(name="agent_tools", tools=[self.run_agent])
 
     def run_agent(self, run_context: RunContext, agent_name: str, task: str) -> str:
@@ -132,15 +136,12 @@ class AgentsToolkit(Toolkit):
             run_context is injected automatically by Agno — do not pass it manually.
         """
         try:
-            entry = _agents_registry.get(agent_name)
+            entry = self._agent_registry.get(agent_name) if self._agent_registry else None
             if entry is None:
                 return f"Error: agent '{agent_name}' not found."
 
-            with open(entry["file_path"], "r", encoding="utf-8") as f:
-                content = f.read()
-
             from prompt import build_subagent_system_prompt
-            system_prompt = build_subagent_system_prompt(content, self._skill_registry)
+            system_prompt = build_subagent_system_prompt(entry["content"], self._skill_registry, self._agent_registry)
             model = entry["model"] or "claude-sonnet-4-6"
 
             sub_agent = Agent(
@@ -148,10 +149,10 @@ class AgentsToolkit(Toolkit):
                 system_message=system_prompt,
                 tools=[
                     BotToolkit(approvals_file=APPROVALS_FILE),
-                    AgentsToolkit(skill_registry=self._skill_registry),
+                    AgentsToolkit(skill_registry=self._skill_registry, agent_registry=self._agent_registry),
                 ],
                 debug_mode=True,
-                # no db, no tools, no session_id — ephemeral one-shot agent
+                # no db, no session_id — ephemeral one-shot agent
             )
 
             resp = sub_agent.run(task, session_state=run_context.session_state)

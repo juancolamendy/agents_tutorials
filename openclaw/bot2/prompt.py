@@ -2,7 +2,7 @@ import os
 import re
 from datetime import datetime, timedelta
 
-from agents import extract_frontmatter_body, load_agents_index
+from agents import AgentRegistry, extract_frontmatter_body
 from skills import SkillRegistry
 
 # Resolve relative to this file so the bot works from any working directory.
@@ -53,11 +53,12 @@ def load_daily_memory() -> str:
     return "\n\n".join(entries)
 
 
-def build_system_prompt(skill_registry: SkillRegistry) -> str:
+def build_system_prompt(skill_registry: SkillRegistry, agent_registry: AgentRegistry) -> str:
     """Assemble the full system prompt from workspace files, skills index, and memory instructions.
 
     Args:
         skill_registry: Pre-loaded SkillRegistry singleton from main.
+        agent_registry: Pre-loaded AgentRegistry singleton from main.
     """
     parts = []
 
@@ -76,14 +77,18 @@ def build_system_prompt(skill_registry: SkillRegistry) -> str:
     if skills:
         parts.append(f"## Skills\n\n{skills}")
 
-    agents_index = load_agents_index()
+    agents_index = agent_registry.get_agents_index()
     if agents_index:
         parts.append(f"## Agents\n\n{agents_index}")
 
     return "\n\n".join(parts)
 
 
-def build_subagent_system_prompt(agent_content: str, skill_registry: SkillRegistry | None) -> str:
+def build_subagent_system_prompt(
+    agent_content: str,
+    skill_registry: SkillRegistry | None,
+    agent_registry: AgentRegistry | None,
+) -> str:
     """Assemble a full system prompt for a subagent.
 
     Combines the agent body (frontmatter stripped) with current date,
@@ -92,6 +97,7 @@ def build_subagent_system_prompt(agent_content: str, skill_registry: SkillRegist
     Args:
         agent_content: Raw markdown content of the agent's .md file (including frontmatter).
         skill_registry: Pre-loaded SkillRegistry singleton from main, or None to omit skills.
+        agent_registry: Pre-loaded AgentRegistry singleton from main, or None to omit agents.
     """
     parts = []
 
@@ -107,8 +113,9 @@ def build_subagent_system_prompt(agent_content: str, skill_registry: SkillRegist
         if skills:
             parts.append(f"## Skills\n\n{skills}")
 
-    agents_index = load_agents_index()
-    if agents_index:
-        parts.append(f"## Agents\n\n{agents_index}")
+    if agent_registry is not None:
+        agents_index = agent_registry.get_agents_index()
+        if agents_index:
+            parts.append(f"## Agents\n\n{agents_index}")
 
     return "\n\n".join(parts)
