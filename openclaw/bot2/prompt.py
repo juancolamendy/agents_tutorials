@@ -1,9 +1,9 @@
-import html
 import os
 import re
 from datetime import datetime, timedelta
 
 from agents import extract_frontmatter_body, load_agents_index
+from skills import SkillRegistry
 
 # Resolve relative to this file so the bot works from any working directory.
 # Do NOT use "./workspace" — it breaks when invoked from outside bot2/.
@@ -53,58 +53,12 @@ def load_daily_memory() -> str:
     return "\n\n".join(entries)
 
 
-def load_skills_index() -> str:
-    """Scan workspace/skills/ and build a compact XML skills index."""
-    skills_dir = os.path.join(WORKSPACE_DIR, "skills")
-    try:
-        entries = sorted(os.listdir(skills_dir))
-    except OSError:
-        return ""
+def build_system_prompt(skill_registry: SkillRegistry) -> str:
+    """Assemble the full system prompt from workspace files, skills index, and memory instructions.
 
-    skills = []
-    for name in entries:
-        dir_path = os.path.join(skills_dir, name)
-        if not os.path.isdir(dir_path):
-            continue
-        skill_file = os.path.join(dir_path, "SKILL.md")
-        try:
-            with open(skill_file, "r", encoding="utf-8") as f:
-                content = f.read()
-        except Exception:
-            continue
-        meta = parse_skill_frontmatter(content)
-        skills.append({
-            "name": meta.get("name", name),
-            "description": meta.get("description", ""),
-            "location": os.path.join(WORKSPACE_DIR, "skills", name, "SKILL.md"),
-            "directory": os.path.join(WORKSPACE_DIR, "skills", name),
-        })
-
-    if not skills:
-        return ""
-
-    xml_entries = "\n".join(
-        f"  <skill>\n"
-        f"    <name>{html.escape(s['name'])}</name>\n"
-        f"    <description>{html.escape(s['description'])}</description>\n"
-        f"    <location>{html.escape(s['location'])}</location>\n"
-        f"    <directory>{html.escape(s['directory'])}</directory>\n"
-        f"  </skill>"
-        for s in skills
-    )
-    return (
-        "When a task matches one of the skills below, use the `read_file` tool to "
-        "load the SKILL.md at the listed location for detailed instructions.\n\n"
-        "All scripts and paths referenced inside a SKILL.md are relative to that "
-        "skill's <directory>. For example, if a skill says `uv run ./scripts/foo.py`, "
-        "the full path is <directory>/scripts/foo.py. Always prefix script paths with "
-        "the skill's <directory> when calling run_command.\n\n"
-        f"<available_skills>\n{xml_entries}\n</available_skills>"
-    )
-
-
-def build_system_prompt() -> str:
-    """Assemble the full system prompt from workspace files, skills index, and memory instructions."""
+    Args:
+        skill_registry: Pre-loaded SkillRegistry singleton from main.
+    """
     parts = []
 
     date_str = datetime.now().strftime("%A, %B %d, %Y")
@@ -118,7 +72,7 @@ def build_system_prompt() -> str:
     if daily_mem:
         parts.append(f"## Recent Memory\n\n{daily_mem}")
 
-    skills = load_skills_index()
+    skills = skill_registry.get_skills_index()
     if skills:
         parts.append(f"## Skills\n\n{skills}")
 
@@ -129,7 +83,7 @@ def build_system_prompt() -> str:
     return "\n\n".join(parts)
 
 
-def build_subagent_system_prompt(agent_content: str) -> str:
+def build_subagent_system_prompt(agent_content: str, skill_registry: SkillRegistry | None) -> str:
     """Assemble a full system prompt for a subagent.
 
     Combines the agent body (frontmatter stripped) with current date,
@@ -137,6 +91,7 @@ def build_subagent_system_prompt(agent_content: str) -> str:
 
     Args:
         agent_content: Raw markdown content of the agent's .md file (including frontmatter).
+        skill_registry: Pre-loaded SkillRegistry singleton from main, or None to omit skills.
     """
     parts = []
 
@@ -147,9 +102,10 @@ def build_subagent_system_prompt(agent_content: str) -> str:
     date_str = datetime.now().strftime("%A, %B %d, %Y")
     parts.append(f"## Current Date & Time\n\n{date_str}")
 
-    skills = load_skills_index()
-    if skills:
-        parts.append(f"## Skills\n\n{skills}")
+    if skill_registry is not None:
+        skills = skill_registry.get_skills_index()
+        if skills:
+            parts.append(f"## Skills\n\n{skills}")
 
     agents_index = load_agents_index()
     if agents_index:

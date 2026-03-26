@@ -25,6 +25,7 @@ from agents import AgentsToolkit
 from constants import APPROVALS_FILE, MEMORY_DIR, SESSIONS_DIR
 from memory_db import MarkdownMemoryDb
 from prompt import build_system_prompt
+from skills import SkillRegistry
 from storage import JsonlAgentDb
 from tools import BotToolkit
 
@@ -32,6 +33,8 @@ load_dotenv()
 
 os.makedirs(SESSIONS_DIR, exist_ok=True)
 os.makedirs(MEMORY_DIR, exist_ok=True)
+
+skill_registry = SkillRegistry()
 
 
 def build_agent() -> Agent:
@@ -42,13 +45,13 @@ def build_agent() -> Agent:
     """
     return Agent(
         model=Claude(id='claude-sonnet-4-6', cache_system_prompt=True),
+        system_message=build_system_prompt(skill_registry),
         tools=[
             BotToolkit(approvals_file=APPROVALS_FILE),
-            AgentsToolkit(),
+            AgentsToolkit(skill_registry=skill_registry),
             MemoryTools(db=MarkdownMemoryDb(MEMORY_DIR)),
         ],
         db=JsonlAgentDb(sessions_dir=SESSIONS_DIR),
-        system_message=build_system_prompt(),
         add_history_to_context=True,
         num_history_runs=20,
         max_tool_calls_from_history=5,

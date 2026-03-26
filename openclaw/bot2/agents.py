@@ -118,7 +118,8 @@ def load_agents_index() -> str:
 class AgentsToolkit(Toolkit):
     """Agno Toolkit providing the run_agent tool for sub-agent dispatch."""
 
-    def __init__(self) -> None:
+    def __init__(self, skill_registry=None) -> None:
+        self._skill_registry = skill_registry
         super().__init__(name="agent_tools", tools=[self.run_agent])
 
     def run_agent(self, run_context: RunContext, agent_name: str, task: str) -> str:
@@ -140,7 +141,7 @@ class AgentsToolkit(Toolkit):
                 content = f.read()
 
             from prompt import build_subagent_system_prompt
-            system_prompt = build_subagent_system_prompt(content)
+            system_prompt = build_subagent_system_prompt(content, self._skill_registry)
             model = entry["model"] or "claude-sonnet-4-6"
 
             sub_agent = Agent(
@@ -148,8 +149,9 @@ class AgentsToolkit(Toolkit):
                 system_message=system_prompt,
                 tools=[
                     BotToolkit(approvals_file=APPROVALS_FILE),
-                    AgentsToolkit(),
-                ],                
+                    AgentsToolkit(skill_registry=self._skill_registry),
+                ],
+                debug_mode=True,
                 # no db, no tools, no session_id — ephemeral one-shot agent
             )
 
