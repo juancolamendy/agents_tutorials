@@ -18,11 +18,11 @@ from datetime import datetime
 from dotenv import load_dotenv
 
 from agno.agent import Agent
-from agno.models.anthropic import Claude
 from agno.tools.memory import MemoryTools
 
 from agents import AgentRegistry, AgentsToolkit
 from constants import APPROVALS_FILE, MEMORY_DIR, SESSIONS_DIR
+from llm_config import CLAUDE_HAIKU, load_model
 from memory_db import MarkdownMemoryDb
 from prompt import build_system_prompt
 from skills import SkillRegistry
@@ -30,8 +30,6 @@ from storage import JsonlAgentDb
 from tools import BotToolkit
 
 load_dotenv()
-
-MODEL_NAME = 'claude-haiku-4-5-20251001'
 
 os.makedirs(SESSIONS_DIR, exist_ok=True)
 os.makedirs(MEMORY_DIR, exist_ok=True)
@@ -47,7 +45,7 @@ def build_agent() -> Agent:
         Agent: Ready-to-use agent instance with storage, memory, and tools.
     """
     return Agent(
-        model=Claude(id=MODEL_NAME, cache_system_prompt=True),
+        model=load_model(CLAUDE_HAIKU, cache_system_prompt=True),
         system_message=build_system_prompt(skill_registry, agent_registry),
         tools=[
             BotToolkit(approvals_file=APPROVALS_FILE),
