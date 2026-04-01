@@ -18,6 +18,8 @@ from agno.tools import Toolkit
 from tools import BotToolkit
 from constants import APPROVALS_FILE
 
+MODEL_NAME = 'claude-haiku-4-5-20251001'
+
 # Resolved via __file__ so the bot works from any working directory.
 WORKSPACE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "workspace")
 
@@ -142,7 +144,7 @@ class AgentsToolkit(Toolkit):
 
             from prompt import build_subagent_system_prompt
             system_prompt = build_subagent_system_prompt(entry["content"], self._skill_registry, self._agent_registry)
-            model = entry["model"] or "claude-sonnet-4-6"
+            model = entry["model"] or MODEL_NAME
 
             sub_agent = Agent(
                 model=Claude(id=model),

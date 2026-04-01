@@ -9,6 +9,8 @@ from unittest.mock import MagicMock, patch
 from agno.tools import Toolkit
 import agents as agents_module
 
+MODEL_NAME = 'claude-sonnet-4-6'
+
 
 class TestExtractFrontmatterBody:
 
@@ -295,7 +297,7 @@ class TestRunAgentHappyPath:
         with patch("agents.Agent") as MockAgent, patch("agents.Claude") as MockClaude:
             MockAgent.return_value.run.return_value = MagicMock(content="ok")
             toolkit.run_agent(_make_fake_ctx(), "my-agent", "task")
-            MockClaude.assert_called_once_with(id="claude-sonnet-4-6")
+            MockClaude.assert_called_once_with(id=MODEL_NAME)
 
     def test_explicit_model_used_when_present(self):
         toolkit = self._setup(model="claude-haiku-4-5-20251001")

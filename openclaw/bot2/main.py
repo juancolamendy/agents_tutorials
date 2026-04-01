@@ -31,6 +31,8 @@ from tools import BotToolkit
 
 load_dotenv()
 
+MODEL_NAME = 'claude-haiku-4-5-20251001'
+
 os.makedirs(SESSIONS_DIR, exist_ok=True)
 os.makedirs(MEMORY_DIR, exist_ok=True)
 
@@ -45,7 +47,7 @@ def build_agent() -> Agent:
         Agent: Ready-to-use agent instance with storage, memory, and tools.
     """
     return Agent(
-        model=Claude(id='claude-sonnet-4-6', cache_system_prompt=True),
+        model=Claude(id=MODEL_NAME, cache_system_prompt=True),
         system_message=build_system_prompt(skill_registry, agent_registry),
         tools=[
             BotToolkit(approvals_file=APPROVALS_FILE),
