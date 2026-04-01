@@ -14,12 +14,12 @@ from agno.agent import Agent
 from agno.run import RunContext  # verified agno 2.5.9
 from agno.tools import Toolkit
 
-from tools import BotToolkit
+from engine.tools import BotToolkit
 from constants import APPROVALS_FILE
-from llm_config import CLAUDE_HAIKU, load_model
+from engine.llm_config import load_model
 
 # Resolved via __file__ so the bot works from any working directory.
-WORKSPACE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "workspace")
+WORKSPACE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "workspace")
 
 
 def extract_frontmatter_body(content: str) -> str:
@@ -120,9 +120,15 @@ class AgentRegistry:
 class AgentsToolkit(Toolkit):
     """Agno Toolkit providing the run_agent tool for sub-agent dispatch."""
 
-    def __init__(self, skill_registry=None, agent_registry: AgentRegistry | None = None) -> None:
+    def __init__(
+        self,
+        skill_registry=None,
+        agent_registry: AgentRegistry | None = None,
+        default_model_key: str = "",
+    ) -> None:
         self._skill_registry = skill_registry
         self._agent_registry = agent_registry
+        self._default_model_key = default_model_key
         super().__init__(name="agent_tools", tools=[self.run_agent])
 
     def run_agent(self, run_context: RunContext, agent_name: str, task: str) -> str:
@@ -140,16 +146,16 @@ class AgentsToolkit(Toolkit):
             if entry is None:
                 return f"Error: agent '{agent_name}' not found."
 
-            from prompt import build_subagent_system_prompt
+            from engine.prompt import build_subagent_system_prompt
             system_prompt = build_subagent_system_prompt(entry["content"], self._skill_registry, self._agent_registry)
-            model_key = entry["model"] or CLAUDE_HAIKU
+            model_key = entry["model"] or self._default_model_key
 
             sub_agent = Agent(
                 model=load_model(model_key),
                 system_message=system_prompt,
                 tools=[
                     BotToolkit(approvals_file=APPROVALS_FILE),
-                    AgentsToolkit(skill_registry=self._skill_registry, agent_registry=self._agent_registry),
+                    AgentsToolkit(skill_registry=self._skill_registry, agent_registry=self._agent_registry, default_model_key=self._default_model_key),
                 ],
                 debug_mode=True,
                 # no db, no session_id — ephemeral one-shot agent

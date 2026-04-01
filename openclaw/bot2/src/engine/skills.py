@@ -3,7 +3,7 @@ import os
 import re
 
 
-WORKSPACE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "workspace")
+WORKSPACE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "workspace")
 
 
 def _parse_skill_frontmatter(content: str) -> dict:

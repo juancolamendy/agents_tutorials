@@ -2,12 +2,12 @@ import os
 import re
 from datetime import datetime, timedelta
 
-from agents import AgentRegistry, extract_frontmatter_body
-from skills import SkillRegistry
+from engine.agents import AgentRegistry, extract_frontmatter_body
+from engine.skills import SkillRegistry
 
 # Resolve relative to this file so the bot works from any working directory.
 # Do NOT use "./workspace" — it breaks when invoked from outside bot2/.
-WORKSPACE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "workspace")
+WORKSPACE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "workspace")
 CONTEXT_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "IDENTITY.md", "TOOLS.md"]
 
 

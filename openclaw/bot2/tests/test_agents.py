@@ -7,8 +7,10 @@ import shutil
 from unittest.mock import MagicMock, patch
 
 from agno.tools import Toolkit
-import agents as agents_module
-from llm_config import CLAUDE_SONNET
+import engine.agents as agents_module
+
+CLAUDE_HAIKU = "claude-haiku-4-5-20251001"
+CLAUDE_SONNET = "claude-sonnet-4-6"
 
 
 class TestExtractFrontmatterBody:
@@ -243,7 +245,7 @@ class TestRunAgentErrors:
     def test_api_exception_returns_error_string(self):
         registry = _make_agent_registry(_AGENT_CONTENT)
         toolkit = agents_module.AgentsToolkit(agent_registry=registry)
-        with patch("agents.Agent") as MockAgent:
+        with patch("engine.agents.Agent") as MockAgent:
             MockAgent.return_value.run.side_effect = RuntimeError("API down")
             result = toolkit.run_agent(_make_fake_ctx(), "my-agent", "task")
         assert "my-agent" in result
@@ -252,7 +254,7 @@ class TestRunAgentErrors:
     def test_none_response_content_returns_empty_string(self):
         registry = _make_agent_registry(_AGENT_CONTENT)
         toolkit = agents_module.AgentsToolkit(agent_registry=registry)
-        with patch("agents.Agent") as MockAgent:
+        with patch("engine.agents.Agent") as MockAgent:
             MockAgent.return_value.run.return_value = MagicMock(content=None)
             result = toolkit.run_agent(_make_fake_ctx(), "my-agent", "task")
         assert result == ""
@@ -262,11 +264,11 @@ class TestRunAgentHappyPath:
 
     def _setup(self, model=None):
         registry = _make_agent_registry(_AGENT_CONTENT, model=model)
-        return agents_module.AgentsToolkit(agent_registry=registry)
+        return agents_module.AgentsToolkit(agent_registry=registry, default_model_key=CLAUDE_HAIKU)
 
     def test_successful_call_returns_response_content(self):
         toolkit = self._setup()
-        with patch("agents.Agent") as MockAgent:
+        with patch("engine.agents.Agent") as MockAgent:
             MockAgent.return_value.run.return_value = MagicMock(content="summary result")
             result = toolkit.run_agent(_make_fake_ctx(), "my-agent", "summarize this")
         assert result == "summary result"
@@ -275,7 +277,7 @@ class TestRunAgentHappyPath:
         toolkit = self._setup()
         state = {"user": "alice", "pref": "brief"}
         ctx = _make_fake_ctx(session_state=state)
-        with patch("agents.Agent") as MockAgent:
+        with patch("engine.agents.Agent") as MockAgent:
             MockAgent.return_value.run.return_value = MagicMock(content="ok")
             toolkit.run_agent(ctx, "my-agent", "task")
             call_kwargs = MockAgent.return_value.run.call_args
@@ -284,30 +286,32 @@ class TestRunAgentHappyPath:
     def test_none_session_state_passed_as_none(self):
         toolkit = self._setup()
         ctx = _make_fake_ctx(session_state=None)
-        with patch("agents.Agent") as MockAgent:
+        with patch("engine.agents.Agent") as MockAgent:
             MockAgent.return_value.run.return_value = MagicMock(content="ok")
             toolkit.run_agent(ctx, "my-agent", "task")
             call_kwargs = MockAgent.return_value.run.call_args
         assert "session_state" in call_kwargs.kwargs
         assert call_kwargs.kwargs["session_state"] is None
 
-    def test_model_absent_defaults_to_sonnet(self):
+    def test_model_absent_defaults_to_haiku(self):
         toolkit = self._setup(model=None)
-        with patch("agents.Agent") as MockAgent, patch("agents.Claude") as MockClaude:
+        with patch("engine.agents.Agent") as MockAgent, patch("engine.agents.load_model") as MockLoadModel:
             MockAgent.return_value.run.return_value = MagicMock(content="ok")
+            MockLoadModel.return_value = MagicMock()
             toolkit.run_agent(_make_fake_ctx(), "my-agent", "task")
-            MockClaude.assert_called_once_with(id=CLAUDE_SONNET)
+            MockLoadModel.assert_called_once_with(CLAUDE_HAIKU)
 
     def test_explicit_model_used_when_present(self):
         toolkit = self._setup(model="claude-haiku-4-5-20251001")
-        with patch("agents.Agent") as MockAgent, patch("agents.Claude") as MockClaude:
+        with patch("engine.agents.Agent") as MockAgent, patch("engine.agents.load_model") as MockLoadModel:
             MockAgent.return_value.run.return_value = MagicMock(content="ok")
+            MockLoadModel.return_value = MagicMock()
             toolkit.run_agent(_make_fake_ctx(), "my-agent", "task")
-            MockClaude.assert_called_once_with(id="claude-haiku-4-5-20251001")
+            MockLoadModel.assert_called_once_with("claude-haiku-4-5-20251001")
 
     def test_sub_agent_instantiated_without_db(self):
         toolkit = self._setup()
-        with patch("agents.Agent") as MockAgent:
+        with patch("engine.agents.Agent") as MockAgent:
             MockAgent.return_value.run.return_value = MagicMock(content="ok")
             toolkit.run_agent(_make_fake_ctx(), "my-agent", "task")
             call_kwargs = MockAgent.call_args.kwargs

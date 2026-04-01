@@ -20,16 +20,29 @@ from dotenv import load_dotenv
 from agno.agent import Agent
 from agno.tools.memory import MemoryTools
 
-from agents import AgentRegistry, AgentsToolkit
+from engine.agents import AgentRegistry, AgentsToolkit
 from constants import APPROVALS_FILE, MEMORY_DIR, SESSIONS_DIR
-from llm_config import CLAUDE_HAIKU, load_model
-from memory_db import MarkdownMemoryDb
-from prompt import build_system_prompt
-from skills import SkillRegistry
-from storage import JsonlAgentDb
-from tools import BotToolkit
+from engine.llm_config import ModelProvider, ModelSpec, load_model, register_model
+from engine.memory_db import MarkdownMemoryDb
+from engine.prompt import build_system_prompt
+from engine.skills import SkillRegistry
+from engine.storage import JsonlAgentDb
+from engine.tools import BotToolkit
 
 load_dotenv()
+
+# Model registry — keys match agent markdown frontmatter ``model:`` values.
+CLAUDE_SONNET = "claude-sonnet-4-6"
+CLAUDE_HAIKU = "claude-haiku-4-5-20251001"
+GEMINI_FLASH = "gemini-2.5-flash"
+GEMINI_FLASH_LITE = "gemini-2.5-flash-lite"
+GROQ_LLAMA_70B = "groq/llama-3.3-70b-versatile"
+
+register_model(CLAUDE_SONNET,     ModelSpec(ModelProvider.ANTHROPIC, "claude-sonnet-4-6",          thinking=False))
+register_model(CLAUDE_HAIKU,      ModelSpec(ModelProvider.ANTHROPIC, "claude-haiku-4-5-20251001",   thinking=False))
+register_model(GEMINI_FLASH,      ModelSpec(ModelProvider.GOOGLE,    "gemini-2.5-flash",            thinking=False))
+register_model(GEMINI_FLASH_LITE, ModelSpec(ModelProvider.GOOGLE,    "gemini-2.5-flash-lite",       thinking=False))
+register_model(GROQ_LLAMA_70B,    ModelSpec(ModelProvider.GROQ,      "llama-3.3-70b-versatile",     thinking=False))
 
 os.makedirs(SESSIONS_DIR, exist_ok=True)
 os.makedirs(MEMORY_DIR, exist_ok=True)
@@ -49,7 +62,7 @@ def build_agent() -> Agent:
         system_message=build_system_prompt(skill_registry, agent_registry),
         tools=[
             BotToolkit(approvals_file=APPROVALS_FILE),
-            AgentsToolkit(skill_registry=skill_registry, agent_registry=agent_registry),
+            AgentsToolkit(skill_registry=skill_registry, agent_registry=agent_registry, default_model_key=CLAUDE_HAIKU),
             MemoryTools(db=MarkdownMemoryDb(MEMORY_DIR)),
         ],
         db=JsonlAgentDb(sessions_dir=SESSIONS_DIR),

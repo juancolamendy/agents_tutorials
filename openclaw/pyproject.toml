@@ -14,8 +14,8 @@ dependencies = [
 dev = ["pytest>=8.0"]
 
 [tool.setuptools.packages.find]
-include = ["bot1*", "bot2*"]
+include = ["bot1*", "bot2/src*"]
 
 [tool.pytest.ini_options]
-pythonpath = ["bot1", "bot2"]
+pythonpath = ["bot1", "bot2/src"]
 testpaths = ["bot1/tests", "bot2/tests"]
